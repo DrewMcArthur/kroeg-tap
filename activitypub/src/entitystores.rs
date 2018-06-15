@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use futures::future;
 use futures::prelude::*;
 
+use diesel::{sql_query, RunQueryDsl};
+
 struct NodeGenerator {
     i: u32,
     map: HashMap<String, String>,
@@ -38,6 +40,7 @@ pub struct QuadEntityStore<T: EntityStore> {
     client: RefCell<QuadClient>,
     cache: RefCell<HashMap<String, Option<StoreItem>>>,
     next: T,
+    in_transaction: bool,
 }
 
 impl<T: EntityStore> QuadEntityStore<T> {
@@ -46,6 +49,48 @@ impl<T: EntityStore> QuadEntityStore<T> {
             client: RefCell::new(client),
             cache: RefCell::new(HashMap::new()),
             next: next,
+            in_transaction: false,
+        }
+    }
+
+    pub fn begin_transaction(&mut self) {
+        assert!(self.in_transaction == false);
+        self.in_transaction = true;
+
+        let client = self.client.borrow();
+
+        sql_query("begin transaction")
+            .execute(client.connection())
+            .unwrap();
+    }
+
+    pub fn commit_transaction(&mut self) {
+        assert!(self.in_transaction == true);
+        self.in_transaction = false;
+
+        let client = self.client.borrow();
+
+        sql_query("commit")
+            .execute(client.connection())
+            .unwrap();
+    }
+
+    pub fn rollback_transaction(&mut self) {
+        assert!(self.in_transaction == true);
+        self.in_transaction = false;
+
+        let client = self.client.borrow();
+
+        sql_query("commit")
+            .execute(client.connection())
+            .unwrap();
+    }
+}
+
+impl<T: EntityStore> Drop for QuadEntityStore<T> {
+    fn drop(&mut self) {
+        if self.in_transaction {
+            self.rollback_transaction();
         }
     }
 }

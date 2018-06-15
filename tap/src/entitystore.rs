@@ -1,16 +1,18 @@
 //! Traits for all things that have to do with storing and retrieving entities.
 
 use super::entity::StoreItem;
-use std::fmt::{self, Debug, Display};
+use std::fmt::{self, Debug};
 
 use futures::future;
 use futures::prelude::*;
+
+use std::error::Error;
 
 /// An entity store, storing JSON-LD `Entity` objects.
 pub trait EntityStore: Debug + Send + 'static {
     /// The error type that will be returned if this store fails to get or put
     /// the `StoreItem`
-    type Error: Debug + Display + Send;
+    type Error: Error + Send;
 
     /// The `Future` that is returned when `get`ting a `StoreItem`.
     type GetFuture: Future<Item = Option<StoreItem>, Error = Self::Error> + 'static + Send;
@@ -47,6 +49,12 @@ pub struct EndOfChainError;
 impl fmt::Display for EndOfChainError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "end of chain without store method being handled")
+    }
+}
+
+impl Error for EndOfChainError {
+    fn cause(&self) -> Option<&Error> {
+        None
     }
 }
 

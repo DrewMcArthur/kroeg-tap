@@ -1,17 +1,20 @@
-use chrono::offset::Utc;
-use chrono::DateTime;
 use std::collections::HashMap;
 
 /// Context for an ActivityPub request.
+#[derive(Debug)]
 pub struct Context {
     /// User data for this request.
     pub user: User,
 
     /// The base URI of the server, e.g. `https://example.com`
     pub server_base: String,
+
+    /// Instance ID, allows for multiple servers to share a database.
+    pub instance_id: u32,
 }
 
 /// The authorization data for a single request.
+#[derive(Debug)]
 pub struct User {
     /// A list of unstructured claims for this
     /// token and user.
@@ -25,15 +28,6 @@ pub struct User {
 
     /// The list of servers this token is meant for.
     pub audience: Vec<String>,
-
-    /// Date that this token expires.
-    pub expiration: DateTime<Utc>,
-
-    /// Date when this token becomes valid.
-    pub not_before: DateTime<Utc>,
-
-    /// Date when the token was created.
-    pub issued_at: DateTime<Utc>,
 
     /// An opaque token used for revoking tokens.
     pub token_identifier: String,
