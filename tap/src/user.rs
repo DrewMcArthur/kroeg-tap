@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// Context for an ActivityPub request.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Context {
     /// User data for this request.
     pub user: User,
@@ -14,7 +14,7 @@ pub struct Context {
 }
 
 /// The authorization data for a single request.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct User {
     /// A list of unstructured claims for this
     /// token and user.
