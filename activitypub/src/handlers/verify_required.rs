@@ -74,6 +74,7 @@ fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
 }
 
 impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
+    type Error = RequiredEventsError<T>;
     type Future = Box<Future<Item = (Context, T), Error = RequiredEventsError<T>> + Send>;
 
     #[async(boxed_send)]

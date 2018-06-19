@@ -1,4 +1,4 @@
-#![feature(proc_macro, generators)]
+#![feature(proc_macro, generators, never_type)]
 
 extern crate chrono;
 extern crate futures_await as futures;
