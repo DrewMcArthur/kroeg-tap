@@ -1,4 +1,5 @@
-use kroeg_tap::{Context, EntityStore, MessageHandler, Pointer};
+use kroeg_tap::{Context, EntityStore, MessageHandler};
+use jsonld::nodemap::Pointer;
 
 use std::error::Error;
 use std::fmt;

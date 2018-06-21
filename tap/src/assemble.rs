@@ -1,4 +1,4 @@
-use entity::{Entity, Pointer, StoreItem};
+use entity::StoreItem;
 
 use std::collections::{HashMap, HashSet};
 
@@ -7,6 +7,8 @@ use serde_json::Value as JValue;
 
 use entitystore::EntityStore;
 use futures::prelude::*;
+
+use jsonld::nodemap::{Entity, Pointer, DefaultNodeGenerator, generate_node_map, NodeMapError};
 
 #[async(boxed_send)]
 /// Assemble a single [`Pointer`], avoiding cycles and repeating objects.
@@ -78,13 +80,13 @@ fn _assemble<T: EntityStore>(
     mut seen: HashSet<String>,
 ) -> Result<(Option<T>, HashMap<String, Entity>, HashSet<String>, JValue), T::Error> {
     let mut map = JMap::new();
-    map.insert("@id".to_owned(), JValue::String(item.id));
+    map.insert("@id".to_owned(), JValue::String(item.id.to_owned()));
 
-    if let Some(index) = item.index {
+    if let Some(index) = item.index.to_owned() {
         map.insert("@index".to_owned(), JValue::String(index));
     }
 
-    for (key, values) in item.data {
+    for (key, values) in item.into_data() {
         let mut out = Vec::new();
 
         for value in values {
@@ -125,4 +127,62 @@ pub fn assemble<T: EntityStore>(
     let (nstore, _, nseen, val) = await!(_assemble(main, depth, item.data, store, seen))?;
 
     Ok((nseen, nstore, val))
+}
+
+fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {
+    for value in data {
+        match value {
+            Pointer::Id(ref id) => tangles.push(id.to_owned()),
+            Pointer::List(ref list) => _untangle_vec(list, tangles),
+            _ => {}
+        };
+    }
+}
+
+/// Untangles a JSON-LD object, returning all the objects split up into their respective
+/// `StoreItem`s. May not return the expected value in some cases.
+pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError> {
+    // the tangle map stores a list of node -> node mappings
+    let mut tangle_map: HashMap<String, Vec<String>> = HashMap::new();
+
+    let mut flattened = generate_node_map(data, &mut DefaultNodeGenerator::new())?.remove("@default").unwrap();
+    for (key, item) in flattened.iter() {
+        let mut tangles = Vec::new();
+        for (_, ivalues) in item.iter() {
+            _untangle_vec(ivalues, &mut tangles);
+        }
+
+        if item.iter().next().is_some() {
+            tangle_map.insert(key.to_owned(), tangles);
+        }
+    }
+
+    let mut untangled = HashSet::new();
+    let roots: Vec<_> = tangle_map.keys().filter(|a| !a.starts_with("_:")).map(|a| a.to_owned()).collect();
+
+    let mut result = HashMap::new();
+    for root in roots {
+        let mut to_untangle = tangle_map.remove(&root).unwrap();
+        let mut items = HashMap::new();
+        items.insert(root.to_owned(), flattened.remove(&root).unwrap());
+        while to_untangle.len() > 0 {
+            let item = to_untangle.pop().unwrap();
+            if !item.starts_with("_:") || !tangle_map.contains_key(&item) {
+                continue
+            }
+
+            if untangled.contains(&item) {
+                panic!("too tangled")
+            }
+
+            to_untangle.append(&mut tangle_map.remove(&item).unwrap());
+            items.insert(item.to_owned(), flattened.remove(&item).unwrap());
+            untangled.insert(item);
+        }
+
+        let storeitem = StoreItem::new(root.to_owned(), items);
+        result.insert(root, storeitem);
+    }
+
+    Ok(result)
 }

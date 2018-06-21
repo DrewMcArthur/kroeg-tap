@@ -17,12 +17,3 @@ pub trait MessageHandler<T: EntityStore> {
     /// Process a single message, consuming the message handler.
     fn handle(self, context: Context, entitystore: T, inbox: String, id: String) -> Self::Future;
 }
-
-/// Macro for translating short as:Note style IDs to full strings as used in
-/// `Entity`. e.g. `as2!(name)`.
-#[macro_export]
-macro_rules! as2 {
-    ($ident:ident) => {
-        concat!("https://www.w3.org/ns/activitystreams#", stringify!($ident))
-    };
-}

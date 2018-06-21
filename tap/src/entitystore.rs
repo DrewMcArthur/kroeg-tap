@@ -1,12 +1,11 @@
 //! Traits for all things that have to do with storing and retrieving entities.
 
 use super::entity::StoreItem;
-use std::fmt::{self, Debug};
 
-use futures::future;
 use futures::prelude::*;
 
 use std::error::Error;
+use std::fmt::Debug;
 
 /// An entity store, storing JSON-LD `Entity` objects.
 pub trait EntityStore: Debug + Send + 'static {
@@ -21,7 +20,9 @@ pub trait EntityStore: Debug + Send + 'static {
     type StoreFuture: Future<Item = StoreItem, Error = Self::Error> + 'static + Send;
 
     /// The `Future` that is returned when reading the collection data.
-    type ReadCollectionFuture: Future<Item = CollectionPointer, Error = Self::Error> + 'static + Send;
+    type ReadCollectionFuture: Future<Item = CollectionPointer, Error = Self::Error>
+        + 'static
+        + Send;
 
     /// The `Future` that is returned when writing into a collection.
     type WriteCollectionFuture: Future<Item = (), Error = Self::Error> + 'static + Send;
@@ -38,7 +39,12 @@ pub trait EntityStore: Debug + Send + 'static {
 
     /// Reads N amount of items from the collection corresponding to a specific ID. If a cursor is passed,
     /// it can be used to paginate.
-    fn read_collection(&self, path: String, count: Option<u32>, cursor: Option<String>) -> Self::ReadCollectionFuture;
+    fn read_collection(
+        &self,
+        path: String,
+        count: Option<u32>,
+        cursor: Option<String>,
+    ) -> Self::ReadCollectionFuture;
 
     /// Finds an item in a collection. The result will contain cursors to just before and after the item, if it exists.
     fn find_collection(&self, path: String, item: String) -> Self::ReadCollectionFuture;
@@ -53,7 +59,7 @@ pub trait EntityStore: Debug + Send + 'static {
 pub struct CollectionPointer {
     pub items: Vec<String>,
     pub after: Option<String>,
-    pub before: Option<String>
+    pub before: Option<String>,
 }
 
 /// A recursive entity store, that, if trying to get an unknown `Entity`, will
