@@ -4,6 +4,7 @@ extern crate chrono;
 extern crate futures_await as futures;
 extern crate jsonld;
 extern crate serde_json;
+extern crate rand;
 
 /// Macro for translating short as:Note style IDs to full strings as used in
 /// `Entity`. e.g. `as2!(name)`.

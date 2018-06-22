@@ -8,23 +8,32 @@ use super::entitystore::EntityStore;
 use super::user::Context;
 use jsonld::nodemap::{Entity, Pointer};
 
+use rand::{thread_rng, Rng};
+use std::fmt::Write;
 use std::collections::{HashMap, HashSet};
 
-pub fn get_timestamp() -> String {
-    let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+pub fn get_suggestion() -> String {
+    let mut result = String::new();
+    let mut data: [u8; 5] = [0; 5];
 
-    format!(
-        "{}",
-        duration.as_secs() * 1000 + (duration.subsec_nanos() / 1000) as u64
-    )
+    thread_rng().fill(&mut data);
+    for byte in data.iter() {
+        write!(&mut result, "{:x}", byte).unwrap();
+    }
+
+    result
 }
 
-const NAMES: [&'static str; 3] = [as2!(preferredUsername), as2!(name), as2!(summary)];
+const NAMES: [&'static str; 4] = [as2!(preferredUsername), as2!(name), as2!(summary), as2!(content)];
 
-fn translate_name(nam: &str) -> String {
+fn translate_name(predicate: &str, nam: &str) -> String {
     let mut result = String::new();
 
-    for ch in nam.chars() {
+    if predicate == as2!(preferredUsername) {
+        result += "~";
+    }
+
+    for ch in nam.chars().take(15) {
         if ch.is_alphanumeric() {
             result += &ch.to_lowercase().collect::<String>();
         } else {
@@ -36,18 +45,20 @@ fn translate_name(nam: &str) -> String {
 }
 
 /// Generates a suggestion for a short name in the URL of an entity.
-pub fn shortname_suggestion(object: &StoreItem) -> Option<String> {
-    let main = object.main();
-
+pub fn shortname_suggestion(main: &Entity) -> Option<String> {
     for name in NAMES.iter() {
         if main[name].len() > 0 {
             let first = &main[name][0];
             if let Pointer::Value(ref val) = first {
                 if let Value::String(ref string) = val.value {
-                    return Some(translate_name(string));
+                    return Some(translate_name(name, string));
                 }
             }
         }
+    }
+
+    if main.types.len() > 0 && main[as2!(actor)].len() == 0 {
+        return Some(translate_name("@type", main.types[0].split('#').last().unwrap()));
     }
 
     None
@@ -110,7 +121,8 @@ pub fn assign_ids<T: EntityStore>(
             let (parent, id) = to_do.remove(0);
             if let Some(mut newitem) = value.remove(&id) {
                 if newitem.iter().next().is_some() {
-                    let (c, s, r) = await!(assign_id(context, store, None, parent))?;
+                    let suggestion = shortname_suggestion(&newitem);
+                    let (c, s, r) = await!(assign_id(context, store, suggestion, parent))?;
                     context = c;
                     store = s;
 
@@ -156,7 +168,7 @@ pub fn assign_id<T: EntityStore>(
     parent: Option<String>,
 ) -> Result<(Context, T, String), T::Error> {
     let parent = parent.unwrap_or(context.server_base.to_owned());
-    let suggestion = suggestion.unwrap_or(get_timestamp());
+    let suggestion = suggestion.unwrap_or(get_suggestion());
 
     let preliminary = format!("{}/{}", parent, suggestion);
     let test = await!(store.get(preliminary.to_owned()))?;
@@ -165,7 +177,7 @@ pub fn assign_id<T: EntityStore>(
     }
 
     for _ in 1isize..3isize {
-        let suggestion = get_timestamp();
+        let suggestion = get_suggestion();
         let preliminary = format!("{}/{}", parent, suggestion);
         let test = await!(store.get(preliminary.to_owned()))?;
         if test.is_none() {
