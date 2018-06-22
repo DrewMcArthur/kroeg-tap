@@ -14,6 +14,12 @@ macro_rules! as2 {
     };
 }
 #[macro_export]
+macro_rules! ldp {
+    ($ident:ident) => {
+        concat!("http://www.w3.org/ns/ldp#", stringify!($ident))
+    };
+}
+#[macro_export]
 macro_rules! kroeg {
     ($ident:ident) => {
         concat!("https://puckipedia.com/kroeg/ns#", stringify!($ident))

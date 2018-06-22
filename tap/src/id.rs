@@ -4,9 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use super::entity::StoreItem;
-use jsonld::nodemap::{Entity, Pointer};
 use super::entitystore::EntityStore;
 use super::user::Context;
+use jsonld::nodemap::{Entity, Pointer};
 
 use std::collections::{HashMap, HashSet};
 
@@ -53,27 +53,41 @@ pub fn shortname_suggestion(object: &StoreItem) -> Option<String> {
     None
 }
 
-fn _remap_arr(arr: &mut Vec<Pointer>, data: &HashMap<String, String>, found: &mut HashSet<String>) {
+fn _remap_arr(
+    context: &Context,
+    arr: &mut Vec<Pointer>,
+    data: &HashMap<String, String>,
+    found: &mut HashSet<String>,
+) {
     for val in arr {
         match val {
             Pointer::Id(ref mut id) => {
+                if !id.starts_with(&context.server_base) && !id.starts_with("_:") {
+                    continue;
+                }
+
                 found.insert(id.to_owned());
 
                 if data.contains_key(id) {
                     *id = data[id].to_owned();
                 }
-            },
+            }
 
-            Pointer::List(ref mut list) => _remap_arr(list, data, found),
+            Pointer::List(ref mut list) => _remap_arr(context, list, data, found),
 
             _ => {}
         }
     }
 }
 
-fn _remap(entity: &mut Entity, data: &HashMap<String, String>, found: &mut HashSet<String>) {
+fn _remap(
+    context: &Context,
+    entity: &mut Entity,
+    data: &HashMap<String, String>,
+    found: &mut HashSet<String>,
+) {
     for (_, mut value) in entity.iter_mut() {
-        _remap_arr(value, data, found);
+        _remap_arr(context, value, data, found);
     }
 }
 
@@ -82,7 +96,7 @@ pub fn assign_ids<T: EntityStore>(
     mut context: Context,
     mut store: T,
     parent: Option<String>,
-    data: HashMap<String, StoreItem>
+    data: HashMap<String, StoreItem>,
 ) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), T::Error> {
     let mut out = HashMap::new();
     let mut remap = HashMap::new();
@@ -94,36 +108,44 @@ pub fn assign_ids<T: EntityStore>(
 
         while to_do.len() > 0 {
             let (parent, id) = to_do.remove(0);
-            
-            let mut newitem = value.remove(&id).unwrap();
-            let (c, s, r) = await!(assign_id(context, store, None, parent))?;
-            let mut found = HashSet::new();
-            remap.insert(newitem.id.to_owned(), r.to_owned());
-            _remap(&mut newitem, &HashMap::new(), &mut found);
+            if let Some(mut newitem) = value.remove(&id) {
+                if newitem.iter().next().is_some() {
+                    let (c, s, r) = await!(assign_id(context, store, None, parent))?;
+                    context = c;
+                    store = s;
 
-            context = c;
-            store = s;
-            newitem.id = r.to_owned();
+                    let mut found = HashSet::new();
+                    remap.insert(newitem.id.to_owned(), r.to_owned());
+                    _remap(&context, &mut newitem, &HashMap::new(), &mut found);
 
-            for kv in found {
-                if !to_run.contains(&kv) {
-                    to_run.insert(kv.to_owned());
-                    to_do.push((Some(r.to_owned()), kv));
+                    newitem.id = r.to_owned();
+
+                    for kv in found {
+                        if !to_run.contains(&kv) {
+                            to_run.insert(kv.to_owned());
+                            to_do.push((Some(r.to_owned()), kv));
+                        }
+                    }
+
+                    let mut minimap = HashMap::new();
+                    minimap.insert(r.to_owned(), newitem);
+                    let id = r.to_owned();
+                    out.insert(id, StoreItem::new(r.to_owned(), minimap));
                 }
             }
-
-            let mut minimap = HashMap::new();
-            minimap.insert(r.to_owned(), newitem);
-            let id = r.to_owned();
-            out.insert(id, StoreItem::new(r.to_owned(), minimap));
         }
     }
 
     for (_, ref mut value) in out.iter_mut() {
-        _remap(value.main_mut(), &remap, &mut HashSet::new());
+        _remap(&context, value.main_mut(), &remap, &mut HashSet::new());
     }
 
-    Ok((context, store, roots.into_iter().map(|f| remap[&f].to_owned()).collect(), out))
+    Ok((
+        context,
+        store,
+        roots.into_iter().map(|f| remap[&f].to_owned()).collect(),
+        out,
+    ))
 }
 
 #[async]

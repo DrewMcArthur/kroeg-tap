@@ -7,7 +7,7 @@ use serde_json::Value as JValue;
 
 use std::collections::HashMap;
 
-use jsonld::nodemap::{Entity, NodeMapError, generate_node_map, DefaultNodeGenerator};
+use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError};
 
 #[derive(Clone, Debug)]
 /// A result from an `EntityStore` response, containing a `main` ID and a map of `sub`
@@ -59,6 +59,18 @@ impl StoreItem {
         self.data.get_mut(&id).unwrap()
     }
 
+    /// Gets the special meta-entity where parameters are stored.
+    pub fn meta(&mut self) -> &mut Entity {
+        if !self.data.contains_key(kroeg!(meta)) {
+            self.data.insert(
+                kroeg!(meta).to_owned(),
+                Entity::new(kroeg!(meta).to_owned()),
+            );
+        }
+
+        self.data.get_mut(kroeg!(meta)).unwrap()
+    }
+
     pub fn remove(&mut self, id: &str) -> Option<Entity> {
         self.data.remove(id)
     }
@@ -78,20 +90,22 @@ impl StoreItem {
     /// The `main` property is used to store the main object, it should be
     /// the only non-blank node in the map.
     pub fn parse(main: &str, entity: JValue) -> Result<StoreItem, NodeMapError> {
-        let node_map = generate_node_map(entity, &mut DefaultNodeGenerator::new())?.remove("@default").unwrap();
-
-            Ok(StoreItem {
-                id: main.to_owned(),
-                data: node_map,
-                i: 0,
-            })
+        let mut node_map = generate_node_map(entity, &mut DefaultNodeGenerator::new())?
+            .remove("@default")
+            .unwrap();
+        node_map.retain(|k, v| v.iter().next().is_some());
+        Ok(StoreItem {
+            id: main.to_owned(),
+            data: node_map,
+            i: 0,
+        })
     }
 
     pub fn new(main: String, data: HashMap<String, Entity>) -> StoreItem {
         StoreItem {
             id: main,
             data: data,
-            i: 0
+            i: 0,
         }
     }
 }

@@ -1,5 +1,5 @@
-use kroeg_tap::{Context, EntityStore, MessageHandler, assign_id, StoreItem};
-use jsonld::nodemap::{Entity, Value, Pointer};
+use jsonld::nodemap::{Entity, Pointer, Value};
+use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
 
 use std::error::Error;
 use std::fmt;
@@ -22,8 +22,14 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            CreateActorError::MissingRequired(ref val) => write!(f, "The {} predicate is missing or occurs more than once", val),
-            CreateActorError::ExistingPredicate(ref val) => write!(f, "The {} predicate should not have been passed", val),
+            CreateActorError::MissingRequired(ref val) => write!(
+                f,
+                "The {} predicate is missing or occurs more than once",
+                val
+            ),
+            CreateActorError::ExistingPredicate(ref val) => {
+                write!(f, "The {} predicate should not have been passed", val)
+            }
             CreateActorError::EntityStoreError(ref err) => {
                 write!(f, "failed to get value from the entity store: {}", err)
             }
@@ -42,22 +48,29 @@ where
 
 pub struct CreateActorHandler;
 
-    fn _ensure<T: EntityStore + 'static>(entity: &Entity, name: &str) -> Result<Pointer, CreateActorError<T>> {
-        if entity[name].len() == 1 {
-            Ok(entity[name][0].to_owned())
-        } else {
-            Err(CreateActorError::MissingRequired(name.to_owned()))
-        }
+fn _ensure<T: EntityStore + 'static>(
+    entity: &Entity,
+    name: &str,
+) -> Result<Pointer, CreateActorError<T>> {
+    if entity[name].len() == 1 {
+        Ok(entity[name][0].to_owned())
+    } else {
+        Err(CreateActorError::MissingRequired(name.to_owned()))
     }
+}
 
-    fn _set<T: EntityStore + 'static>(entity: &mut Entity, name: &str, val: Pointer) -> Result<(), CreateActorError<T>> {
-        if entity[name].len() != 0 {
-            Err(CreateActorError::ExistingPredicate(name.to_owned()))
-        } else {
-            entity.get_mut(name).push(val);
-            Ok(())
-        }
+fn _set<T: EntityStore + 'static>(
+    entity: &mut Entity,
+    name: &str,
+    val: Pointer,
+) -> Result<(), CreateActorError<T>> {
+    if entity[name].len() != 0 {
+        Err(CreateActorError::ExistingPredicate(name.to_owned()))
+    } else {
+        entity.get_mut(name).push(val);
+        Ok(())
     }
+}
 
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     type Error = CreateActorError<T>;
@@ -85,37 +98,62 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(CreateActorError::MissingRequired(as2!(object).to_owned()))
+            return Err(CreateActorError::MissingRequired(as2!(object).to_owned()));
         };
 
         let mut elem = await!(store.get(elem))
             .map_err(CreateActorError::EntityStoreError)?
             .unwrap();
 
-
         if !elem.main().types.contains(&as2!(Person).to_owned()) {
             return Ok((context, store));
         }
-        
+
         let preferredUsername = _ensure(elem.main(), as2!(preferredUsername))?;
         let name = _ensure(elem.main(), as2!(name))?;
 
-        let (context, mut store, inbox) = await!(assign_id(context, store, Some("inbox".to_owned()), Some(elem.id().to_owned()))).map_err(CreateActorError::EntityStoreError)?;
-        let inbox = StoreItem::new(inbox.to_owned(), vec![
-            (inbox.to_owned(), Entity::new(inbox.to_owned()))
-        ].into_iter().collect());
+        let (context, mut store, inbox) = await!(assign_id(
+            context,
+            store,
+            Some("inbox".to_owned()),
+            Some(elem.id().to_owned())
+        )).map_err(CreateActorError::EntityStoreError)?;
+        let inbox = StoreItem::new(
+            inbox.to_owned(),
+            vec![(inbox.to_owned(), Entity::new(inbox.to_owned()))]
+                .into_iter()
+                .collect(),
+        );
 
-        let inbox = await!(store.put(inbox.id().to_owned(), inbox)).map_err(CreateActorError::EntityStoreError)?;
+        let inbox = await!(store.put(inbox.id().to_owned(), inbox))
+            .map_err(CreateActorError::EntityStoreError)?;
 
-        let (context, mut store, outbox) = await!(assign_id(context, store, Some("outbox".to_owned()), Some(elem.id().to_owned()))).map_err(CreateActorError::EntityStoreError)?;
-        let outbox = StoreItem::new(outbox.to_owned(), vec![
-            (outbox.to_owned(), Entity::new(outbox.to_owned()))
-        ].into_iter().collect());
+        let (context, mut store, outbox) = await!(assign_id(
+            context,
+            store,
+            Some("outbox".to_owned()),
+            Some(elem.id().to_owned())
+        )).map_err(CreateActorError::EntityStoreError)?;
+        let outbox = StoreItem::new(
+            outbox.to_owned(),
+            vec![(outbox.to_owned(), Entity::new(outbox.to_owned()))]
+                .into_iter()
+                .collect(),
+        );
 
-        let outbox = await!(store.put(outbox.id().to_owned(), outbox)).map_err(CreateActorError::EntityStoreError)?;
+        let outbox = await!(store.put(outbox.id().to_owned(), outbox))
+            .map_err(CreateActorError::EntityStoreError)?;
 
-        _set(elem.main_mut(), as2!(inbox), Pointer::Id(inbox.id().to_owned()))?;
-        _set(elem.main_mut(), as2!(outbox), Pointer::Id(outbox.id().to_owned()))?;
+        _set(
+            elem.main_mut(),
+            ldp!(inbox),
+            Pointer::Id(inbox.id().to_owned()),
+        )?;
+        _set(
+            elem.main_mut(),
+            as2!(outbox),
+            Pointer::Id(outbox.id().to_owned()),
+        )?;
 
         await!(store.put(elem.id().to_owned(), elem)).map_err(CreateActorError::EntityStoreError)?;
 
