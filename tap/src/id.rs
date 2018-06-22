@@ -1,12 +1,12 @@
 use futures::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::Value as JValue;
 
 use super::entity::StoreItem;
 use super::entitystore::EntityStore;
 use super::user::Context;
-use jsonld::nodemap::{Entity, Pointer};
+use jsonld::nodemap::{Entity, Pointer, Value};
 
 use rand::{thread_rng, Rng};
 use std::fmt::Write;
@@ -50,7 +50,7 @@ pub fn shortname_suggestion(main: &Entity) -> Option<String> {
         if main[name].len() > 0 {
             let first = &main[name][0];
             if let Pointer::Value(ref val) = first {
-                if let Value::String(ref string) = val.value {
+                if let JValue::String(ref string) = val.value {
                     return Some(translate_name(name, string));
                 }
             }
@@ -141,8 +141,13 @@ pub fn assign_ids<T: EntityStore>(
 
                     let mut minimap = HashMap::new();
                     minimap.insert(r.to_owned(), newitem);
-                    let id = r.to_owned();
-                    out.insert(id, StoreItem::new(r.to_owned(), minimap));
+                    let mut item = StoreItem::new(r.to_owned(), minimap);
+                    item.meta().get_mut(kroeg!(instance)).push(Pointer::Value(Value {
+                        value: JValue::Number(context.instance_id.into()),
+                        type_id: None,
+                        language: None
+                    }));
+                    out.insert(r, item);
                 }
             }
         }
