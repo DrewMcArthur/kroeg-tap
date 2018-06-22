@@ -189,7 +189,7 @@ pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError
 
     // no roots, so we can skip all this magic
     if roots.len() == 0 {
-        let k = free.iter().next().unwrap();
+        let k = free.iter().next().or(tangle_map.keys().next()).unwrap();
         let mut map = HashMap::new();
         map.insert(k.to_owned(), StoreItem::new(k.to_owned(), flattened));
         return Ok(map);
