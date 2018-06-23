@@ -26,6 +26,12 @@ macro_rules! kroeg {
         concat!("https://puckipedia.com/kroeg/ns#", stringify!($ident))
     };
 }
+#[macro_export]
+macro_rules! sec {
+    ($ident:ident) => {
+        concat!("https://w3id.org/security#", stringify!($ident))
+    };
+}
 
 mod assemble;
 pub use assemble::{assemble, untangle};

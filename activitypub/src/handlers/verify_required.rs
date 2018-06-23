@@ -74,6 +74,12 @@ fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
     true
 }
 
+const APPLIES_TO_TYPES: [&'static str; 3] = [
+    as2!(Create),
+    as2!(Update),
+    as2!(Delete),
+];
+
 impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
     type Error = RequiredEventsError<T>;
     type Future = Box<Future<Item = (Context, T), Error = RequiredEventsError<T>> + Send>;
@@ -91,6 +97,10 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
         let mut elem = await!(entitystore.get(elem))
             .map_err(|e| RequiredEventsError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
+        
+        if !elem.main().types.iter().any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str))) {
+            return Ok((context, entitystore));
+        }
 
         let actors = elem.main().get(as2!(actor)).clone();
 
