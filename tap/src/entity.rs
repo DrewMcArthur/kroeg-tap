@@ -7,7 +7,9 @@ use serde_json::Value as JValue;
 
 use std::collections::HashMap;
 
-use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError};
+use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError, Pointer};
+
+use super::user::Context;
 
 #[derive(Clone, Debug)]
 /// A result from an `EntityStore` response, containing a `main` ID and a map of `sub`
@@ -83,6 +85,26 @@ impl StoreItem {
         }
 
         JValue::Array(vec)
+    }
+
+    /// Returns if the instance ID of this object equals the instance ID in the current context.
+    pub fn is_owned(&self, context: &Context) -> bool {
+        if let Some(data) = self.data.get(kroeg!(meta)) {
+            let data = &data[kroeg!(instance)];
+            if data.len() != 1 {
+                false
+            } else {
+                match &data[0] {
+                    Pointer::Value(val) => {
+                        val.value == JValue::Number(context.instance_id.into())
+                    }
+
+                    _ => false
+                }
+            }
+        } else {
+            false
+        }
     }
 
     /// Parse a JSON object containing flattened JSON-LD into a `StoreItem`.
