@@ -82,7 +82,7 @@ const APPLIES_TO_TYPES: [&'static str; 3] = [
 
 impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
     type Error = RequiredEventsError<T>;
-    type Future = Box<Future<Item = (Context, T), Error = RequiredEventsError<T>> + Send>;
+    type Future = Box<Future<Item = (Context, T, String), Error = RequiredEventsError<T>> + Send>;
 
     #[async(boxed_send)]
     fn handle(
@@ -91,7 +91,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
         entitystore: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T), RequiredEventsError<T>> {
+    ) -> Result<(Context, T, String), RequiredEventsError<T>> {
         let subject = context.user.subject.to_owned();
 
         let mut elem = await!(entitystore.get(elem))
@@ -99,7 +99,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
             .expect("Missing the entity being handled, shouldn't happen");
         
         if !elem.main().types.iter().any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str))) {
-            return Ok((context, entitystore));
+            return Ok((context, entitystore, elem.id().to_owned()));
         }
 
         let actors = elem.main().get(as2!(actor)).clone();
@@ -135,7 +135,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                     ) {
                         Err(RequiredEventsError::ActorAttributedToDoNotMatch)
                     } else {
-                        Ok((context, entitystore))
+                        Ok((context, entitystore, elem.id().to_owned()))
                     }
                 } else {
                     Err(RequiredEventsError::MissingObject)

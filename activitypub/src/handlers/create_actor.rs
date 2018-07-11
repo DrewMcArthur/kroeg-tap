@@ -115,7 +115,7 @@ fn _set<T: EntityStore + 'static>(
 
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     type Error = CreateActorError<T>;
-    type Future = Box<Future<Item = (Context, T), Error = CreateActorError<T>> + Send>;
+    type Future = Box<Future<Item = (Context, T, String), Error = CreateActorError<T>> + Send>;
 
     #[async(boxed_send)]
     fn handle(
@@ -124,15 +124,16 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
         store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T), CreateActorError<T>> {
+    ) -> Result<(Context, T, String), CreateActorError<T>> {
         let subject = context.user.subject.to_owned();
+        let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem))
             .map_err(|e| CreateActorError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
-            return Ok((context, store));
+            return Ok((context, store, root));
         }
 
         let elem = _ensure(elem.main(), as2!(object))?;
@@ -147,7 +148,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             .unwrap();
 
         if !elem.main().types.contains(&as2!(Person).to_owned()) {
-            return Ok((context, store));
+            return Ok((context, store, root));
         }
 
         let preferredUsername = _ensure(elem.main(), as2!(preferredUsername))?;
@@ -203,6 +204,6 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
 
         await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(CreateActorError::EntityStoreError)?;
         await!(store.put(elem.id().to_owned(), elem)).map_err(CreateActorError::EntityStoreError)?;
-        Ok((context, store))
+        Ok((context, store, root))
     }
 }

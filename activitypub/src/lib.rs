@@ -7,6 +7,8 @@ extern crate openssl;
 extern crate diesel;
 extern crate futures_await as futures;
 extern crate jsonld;
+
+#[macro_use]
 extern crate serde_json;
 
 pub mod handlers;

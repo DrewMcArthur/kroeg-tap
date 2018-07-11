@@ -10,6 +10,34 @@ use futures::prelude::*;
 
 use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError, Pointer};
 
+#[async]
+fn _get_collectionified<T: EntityStore>(
+    store: T,
+    id: String
+) -> Result<(Option<StoreItem>, T), T::Error> {
+    let without_query = id.split('&').next().unwrap().to_string();
+    if without_query == id {
+        Ok((await!(store.get(id.to_owned()))?, store))
+    } else {
+        if let Some(val) = await!(store.get(without_query.to_owned()))? {
+            if !val.main().types.contains(&as2!(OrderedCollection).to_string()) {
+                return Ok((None, store));
+            }
+
+            let data = await!(store.read_collection(without_query.to_owned(), None, None))?;
+
+            Ok((Some(StoreItem::parse(&id, json!({
+                "@id": id,
+                "@type": [as2!(OrderedCollectionPage)],
+                as2!(partOf): [{"@id": without_query}],
+                "orderedItems": [{"@list": data.items}]
+            })).expect("static input cannot fail")), store))
+        } else {
+            Ok((None, store))
+        }
+    }
+}
+
 #[async(boxed_send)]
 /// Assemble a single [`Pointer`], avoiding cycles and repeating objects.
 fn _assemble_val<T: EntityStore>(
@@ -30,18 +58,24 @@ fn _assemble_val<T: EntityStore>(
                 return await!(_assemble(item, depth + 1, items, store, seen));
             }
             if depth < 3 {
-                if let Some(mut store) = store {
-                    let item = await!(store.get(id.to_owned()))?;
+                store = if let Some(mut store) = store {
+                    let (item, mut store) = await!(_get_collectionified(store, id.to_owned()))?;
                     if let Some(item) = item {
-                        seen.insert(id);
-                        let (s, t, o) = await!(assemble(item, depth + 1, Some(store), seen))?;
-                        return Ok((t, items, s, o));
+                        seen.insert(id.to_owned());
+                        if !item.main().types.contains(&as2!(OrderedCollection).to_string()) {
+                            let (s, t, o) = await!(assemble(item, depth + 1, Some(store), seen))?;
+                            store = t.unwrap();
+                            seen = s;
+                            return Ok((Some(store), items, seen, o));
+                        }
+
+                        Some(store)
                     } else {
                         let mut hash = JMap::new();
                         hash.insert("@id".to_owned(), JValue::String(id));
                         return Ok((Some(store), items, seen, JValue::Object(hash)));
                     }
-                }
+                } else { None }
             }
 
             {
@@ -73,7 +107,7 @@ fn _assemble_val<T: EntityStore>(
 
 #[async(boxed_send)]
 fn _assemble<T: EntityStore>(
-    item: Entity,
+    mut item: Entity,
     depth: u32,
     mut items: HashMap<String, Entity>,
     mut store: Option<T>,

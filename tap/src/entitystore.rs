@@ -56,10 +56,12 @@ pub trait EntityStore: Debug + Send + 'static {
     fn remove_collection(&mut self, path: String, item: String) -> Self::WriteCollectionFuture;
 }
 
+#[derive(Debug)]
 pub struct CollectionPointer {
     pub items: Vec<String>,
     pub after: Option<String>,
     pub before: Option<String>,
+    pub count: Option<u32>,
 }
 
 /// A recursive entity store, that, if trying to get an unknown `Entity`, will

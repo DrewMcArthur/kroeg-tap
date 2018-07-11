@@ -3,6 +3,8 @@
 extern crate chrono;
 extern crate futures_await as futures;
 extern crate jsonld;
+
+#[macro_use]
 extern crate serde_json;
 extern crate rand;
 
