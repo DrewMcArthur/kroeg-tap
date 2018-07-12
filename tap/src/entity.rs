@@ -95,11 +95,9 @@ impl StoreItem {
                 false
             } else {
                 match &data[0] {
-                    Pointer::Value(val) => {
-                        val.value == JValue::Number(context.instance_id.into())
-                    }
+                    Pointer::Value(val) => val.value == JValue::Number(context.instance_id.into()),
 
-                    _ => false
+                    _ => false,
                 }
             }
         } else {

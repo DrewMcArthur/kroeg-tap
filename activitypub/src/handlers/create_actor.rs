@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use openssl::rsa::Rsa;
-use openssl::pkey::{Private, Public};
 use openssl::error::ErrorStack;
+use openssl::pkey::{Private, Public};
+use openssl::rsa::Rsa;
 
 use futures::prelude::*;
 
@@ -84,34 +84,42 @@ fn _set<T: EntityStore + 'static>(
     }
 }
 
-    fn create_key_obj<T: EntityStore + 'static>(owner: &str) -> Result<(Rsa<Private>, StoreItem), CreateActorError<T>> {
-        let id = format!("{}#key", owner);
+fn create_key_obj<T: EntityStore + 'static>(
+    owner: &str,
+) -> Result<(Rsa<Private>, StoreItem), CreateActorError<T>> {
+    let id = format!("{}#key", owner);
 
-        let key = Rsa::generate(2048).map_err(CreateActorError::OpenSSLError)?;
-        let private_pem = String::from_utf8(key.private_key_to_pem().map_err(CreateActorError::OpenSSLError)?).unwrap();
-        let public_pem = String::from_utf8(key.public_key_to_pem().map_err(CreateActorError::OpenSSLError)?).unwrap();
+    let key = Rsa::generate(2048).map_err(CreateActorError::OpenSSLError)?;
+    let private_pem = String::from_utf8(
+        key.private_key_to_pem()
+            .map_err(CreateActorError::OpenSSLError)?,
+    ).unwrap();
+    let public_pem = String::from_utf8(
+        key.public_key_to_pem()
+            .map_err(CreateActorError::OpenSSLError)?,
+    ).unwrap();
 
-        let mut keyobj = Entity::new(id.to_owned());
-        keyobj.types.push(sec!(Key).to_owned());
-        keyobj[sec!(owner)].push(Pointer::Id(owner.to_owned()));
-        keyobj[sec!(publicKeyPem)].push(Pointer::Value(Value {
-            value: JValue::String(public_pem),
-            type_id: None,
-            language: None
-        }));
+    let mut keyobj = Entity::new(id.to_owned());
+    keyobj.types.push(sec!(Key).to_owned());
+    keyobj[sec!(owner)].push(Pointer::Id(owner.to_owned()));
+    keyobj[sec!(publicKeyPem)].push(Pointer::Value(Value {
+        value: JValue::String(public_pem),
+        type_id: None,
+        language: None,
+    }));
 
-        let mut map = HashMap::new();
-        map.insert(id.to_owned(), keyobj);
+    let mut map = HashMap::new();
+    map.insert(id.to_owned(), keyobj);
 
-        let mut storeitem = StoreItem::new(id, map);
-        storeitem.meta()[sec!(privateKeyPem)].push(Pointer::Value(Value {
-            value: JValue::String(private_pem),
-            type_id: None,
-            language: None
-        }));
+    let mut storeitem = StoreItem::new(id, map);
+    storeitem.meta()[sec!(privateKeyPem)].push(Pointer::Value(Value {
+        value: JValue::String(private_pem),
+        type_id: None,
+        language: None,
+    }));
 
-        Ok((key, storeitem))
-    }
+    Ok((key, storeitem))
+}
 
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     type Error = CreateActorError<T>;
@@ -197,12 +205,16 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(outbox.id().to_owned()),
         )?;
 
-
         let (key, keyobj) = create_key_obj(elem.id())?;
 
-        _set(elem.main_mut(), sec!(publicKey), Pointer::Id(keyobj.id().to_owned()))?;
+        _set(
+            elem.main_mut(),
+            sec!(publicKey),
+            Pointer::Id(keyobj.id().to_owned()),
+        )?;
 
-        await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(CreateActorError::EntityStoreError)?;
+        await!(store.put(keyobj.id().to_owned(), keyobj))
+            .map_err(CreateActorError::EntityStoreError)?;
         await!(store.put(elem.id().to_owned(), elem)).map_err(CreateActorError::EntityStoreError)?;
         Ok((context, store, root))
     }

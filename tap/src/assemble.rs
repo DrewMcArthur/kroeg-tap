@@ -8,30 +8,44 @@ use serde_json::Value as JValue;
 use entitystore::EntityStore;
 use futures::prelude::*;
 
+use auth::Authorizer;
+
 use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError, Pointer};
 
 #[async]
 fn _get_collectionified<T: EntityStore>(
     store: T,
-    id: String
+    id: String,
 ) -> Result<(Option<StoreItem>, T), T::Error> {
     let without_query = id.split('&').next().unwrap().to_string();
     if without_query == id {
         Ok((await!(store.get(id.to_owned()))?, store))
     } else {
         if let Some(val) = await!(store.get(without_query.to_owned()))? {
-            if !val.main().types.contains(&as2!(OrderedCollection).to_string()) {
+            if !val
+                .main()
+                .types
+                .contains(&as2!(OrderedCollection).to_string())
+            {
                 return Ok((None, store));
             }
 
             let data = await!(store.read_collection(without_query.to_owned(), None, None))?;
 
-            Ok((Some(StoreItem::parse(&id, json!({
+            Ok((
+                Some(
+                    StoreItem::parse(
+                        &id,
+                        json!({
                 "@id": id,
                 "@type": [as2!(OrderedCollectionPage)],
                 as2!(partOf): [{"@id": without_query}],
                 "orderedItems": [{"@list": data.items}]
-            })).expect("static input cannot fail")), store))
+            }),
+                    ).expect("static input cannot fail"),
+                ),
+                store,
+            ))
         } else {
             Ok((None, store))
         }
@@ -40,79 +54,120 @@ fn _get_collectionified<T: EntityStore>(
 
 #[async(boxed_send)]
 /// Assemble a single [`Pointer`], avoiding cycles and repeating objects.
-fn _assemble_val<T: EntityStore>(
+fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
     value: Pointer,
     depth: u32,
     mut items: HashMap<String, Entity>,
     mut store: Option<T>,
+    mut authorizer: R,
     mut seen: HashSet<String>,
-) -> Result<(Option<T>, HashMap<String, Entity>, HashSet<String>, JValue), T::Error> {
+) -> Result<
+    (
+        Option<T>,
+        R,
+        HashMap<String, Entity>,
+        HashSet<String>,
+        JValue,
+    ),
+    T::Error,
+> {
     match value {
         Pointer::Id(id) => {
             if seen.contains(&id) {
                 let mut hash = JMap::new();
                 hash.insert("@id".to_owned(), JValue::String(id));
-                return Ok((store, items, seen, JValue::Object(hash)));
+                return Ok((store, authorizer, items, seen, JValue::Object(hash)));
             } else if items.contains_key(&id) {
                 let item = items.remove(&id).unwrap();
-                return await!(_assemble(item, depth + 1, items, store, seen));
+                return await!(_assemble(item, depth + 1, items, store, authorizer, seen));
             }
             if depth < 3 {
-                store = if let Some(mut store) = store {
-                    let (item, mut store) = await!(_get_collectionified(store, id.to_owned()))?;
+                store = if let Some(store) = store {
+                    let (item, store) = await!(_get_collectionified(store, id.to_owned()))?;
                     if let Some(item) = item {
+                        let (mut store, can_show) = await!(authorizer.can_show(store, &item))?;
+                        if !can_show {
+                            let mut hash = JMap::new();
+                            hash.insert("@id".to_owned(), JValue::String(id));
+                            return Ok((Some(store), authorizer, items, seen, JValue::Object(hash)));
+                        }
                         seen.insert(id.to_owned());
-                        if !item.main().types.contains(&as2!(OrderedCollection).to_string()) {
-                            let (s, t, o) = await!(assemble(item, depth + 1, Some(store), seen))?;
+                        if !item
+                            .main()
+                            .types
+                            .contains(&as2!(OrderedCollection).to_string())
+                        {
+                            let (s, t, auth, o) =
+                                await!(assemble(item, depth + 1, Some(store), authorizer, seen))?;
                             store = t.unwrap();
+                            authorizer = auth;
                             seen = s;
-                            return Ok((Some(store), items, seen, o));
+                            return Ok((Some(store), authorizer, items, seen, o));
                         }
 
                         Some(store)
                     } else {
                         let mut hash = JMap::new();
                         hash.insert("@id".to_owned(), JValue::String(id));
-                        return Ok((Some(store), items, seen, JValue::Object(hash)));
+                        return Ok((Some(store), authorizer, items, seen, JValue::Object(hash)));
                     }
-                } else { None }
+                } else {
+                    None
+                }
             }
 
             {
                 let mut hash = JMap::new();
                 hash.insert("@id".to_owned(), JValue::String(id));
-                Ok((store, items, seen, JValue::Object(hash)))
+                Ok((store, authorizer, items, seen, JValue::Object(hash)))
             }
         }
 
-        Pointer::Value(val) => Ok((store, items, seen, Pointer::Value(val).to_json())),
+        Pointer::Value(val) => Ok((
+            store,
+            authorizer,
+            items,
+            seen,
+            Pointer::Value(val).to_json(),
+        )),
 
         Pointer::List(list) => {
             let mut vals = Vec::new();
             for item in list {
-                let (nstore, nitems, nseen, res) =
-                    await!(_assemble_val(item, depth, items, store, seen))?;
+                let (nstore, nauth, nitems, nseen, res) =
+                    await!(_assemble_val(item, depth, items, store, authorizer, seen))?;
                 seen = nseen;
                 store = nstore;
+                authorizer = nauth;
                 items = nitems;
                 vals.push(res);
             }
 
             let mut map = JMap::new();
             map.insert("@list".to_owned(), JValue::Array(vals));
-            Ok((store, items, seen, JValue::Object(map)))
+            Ok((store, authorizer, items, seen, JValue::Object(map)))
         }
     }
 }
 
 #[async(boxed_send)]
-fn _assemble<T: EntityStore>(
+fn _assemble<T: EntityStore, R: Authorizer<T>>(
     mut item: Entity,
     depth: u32,
     mut items: HashMap<String, Entity>,
     mut store: Option<T>,
+    mut authorizer: R,
     mut seen: HashSet<String>,
-) -> Result<(Option<T>, HashMap<String, Entity>, HashSet<String>, JValue), T::Error> {
+) -> Result<
+    (
+        Option<T>,
+        R,
+        HashMap<String, Entity>,
+        HashSet<String>,
+        JValue,
+    ),
+    T::Error,
+> {
     seen.insert(item.id.to_owned());
 
     let mut map = JMap::new();
@@ -136,9 +191,10 @@ fn _assemble<T: EntityStore>(
         let mut out = Vec::new();
 
         for value in values {
-            let (nstore, nitems, nseen, res) =
-                await!(_assemble_val(value, depth, items, store, seen))?;
+            let (nstore, nauth, nitems, nseen, res) =
+                await!(_assemble_val(value, depth, items, store, authorizer, seen))?;
             store = nstore;
+            authorizer = nauth;
             items = nitems;
             seen = nseen;
             out.push(res);
@@ -147,7 +203,7 @@ fn _assemble<T: EntityStore>(
         map.insert(key, JValue::Array(out));
     }
 
-    Ok((store, items, seen, JValue::Object(map)))
+    Ok((store, authorizer, items, seen, JValue::Object(map)))
 }
 
 #[async(boxed_send)]
@@ -162,17 +218,19 @@ fn _assemble<T: EntityStore>(
 ///
 /// Currently, if the future fails, the `EntityStore` is completely consumed.
 /// This may change in the future.
-pub fn assemble<T: EntityStore>(
+pub fn assemble<T: EntityStore, R: Authorizer<T>>(
     mut item: StoreItem,
     depth: u32,
     store: Option<T>,
+    authorizer: R,
     seen: HashSet<String>,
-) -> Result<(HashSet<String>, Option<T>, JValue), T::Error> {
+) -> Result<(HashSet<String>, Option<T>, R, JValue), T::Error> {
     let main = item.data.remove(&item.id).unwrap();
 
-    let (nstore, _, nseen, val) = await!(_assemble(main, depth, item.data, store, seen))?;
+    let (nstore, authorizer, _, nseen, val) =
+        await!(_assemble(main, depth, item.data, store, authorizer, seen))?;
 
-    Ok((nseen, nstore, val))
+    Ok((nseen, nstore, authorizer, val))
 }
 
 fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {

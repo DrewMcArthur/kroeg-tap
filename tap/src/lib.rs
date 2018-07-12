@@ -52,3 +52,6 @@ pub use user::*;
 
 mod id;
 pub use id::*;
+
+mod auth;
+pub use auth::*;

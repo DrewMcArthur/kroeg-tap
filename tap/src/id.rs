@@ -9,8 +9,8 @@ use super::user::Context;
 use jsonld::nodemap::{Entity, Pointer, Value};
 
 use rand::{thread_rng, Rng};
-use std::fmt::Write;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 pub fn get_suggestion() -> String {
     let mut result = String::new();
@@ -24,7 +24,12 @@ pub fn get_suggestion() -> String {
     result
 }
 
-const NAMES: [&'static str; 4] = [as2!(preferredUsername), as2!(name), as2!(summary), as2!(content)];
+const NAMES: [&'static str; 4] = [
+    as2!(preferredUsername),
+    as2!(name),
+    as2!(summary),
+    as2!(content),
+];
 
 fn translate_name(predicate: &str, nam: &str) -> String {
     let mut result = String::new();
@@ -58,7 +63,10 @@ pub fn shortname_suggestion(main: &Entity) -> Option<String> {
     }
 
     if main.types.len() > 0 && main[as2!(actor)].len() == 0 {
-        return Some(translate_name("@type", main.types[0].split('#').last().unwrap()));
+        return Some(translate_name(
+            "@type",
+            main.types[0].split('#').last().unwrap(),
+        ));
     }
 
     None
@@ -142,11 +150,13 @@ pub fn assign_ids<T: EntityStore>(
                     let mut minimap = HashMap::new();
                     minimap.insert(r.to_owned(), newitem);
                     let mut item = StoreItem::new(r.to_owned(), minimap);
-                    item.meta().get_mut(kroeg!(instance)).push(Pointer::Value(Value {
-                        value: JValue::Number(context.instance_id.into()),
-                        type_id: None,
-                        language: None
-                    }));
+                    item.meta()
+                        .get_mut(kroeg!(instance))
+                        .push(Pointer::Value(Value {
+                            value: JValue::Number(context.instance_id.into()),
+                            type_id: None,
+                            language: None,
+                        }));
                     out.insert(r, item);
                 }
             }
