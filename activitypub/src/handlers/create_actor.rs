@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 
 use openssl::error::ErrorStack;
-use openssl::pkey::{Private, Public};
+use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 
 use futures::prelude::*;
@@ -133,7 +133,6 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), CreateActorError<T>> {
-        let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem))
@@ -159,8 +158,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             return Ok((context, store, root));
         }
 
-        let preferredUsername = _ensure(elem.main(), as2!(preferredUsername))?;
-        let name = _ensure(elem.main(), as2!(name))?;
+        _ensure(elem.main(), as2!(preferredUsername))?;
+        _ensure(elem.main(), as2!(name))?;
 
         let (context, mut store, inbox) = await!(assign_id(
             context,
@@ -205,7 +204,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(outbox.id().to_owned()),
         )?;
 
-        let (key, keyobj) = create_key_obj(elem.id())?;
+        let (_, keyobj) = create_key_obj(elem.id())?;
 
         _set(
             elem.main_mut(),

@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
+use kroeg_tap::{Context, EntityStore, MessageHandler};
 
 use std::error::Error;
 use std::fmt;
@@ -66,12 +66,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
     #[async(boxed_send)]
     fn handle(
         self,
-        mut context: Context,
+        context: Context,
         mut store: T,
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), ServerCreateError<T>> {
-        let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem))

@@ -85,7 +85,6 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), ClientCreateError<T>> {
-        let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem))
