@@ -104,7 +104,6 @@ impl StoreItem {
             false
         }
     }
-
     /// Parse a JSON object containing flattened JSON-LD into a `StoreItem`.
     ///
     /// The `main` property is used to store the main object, it should be

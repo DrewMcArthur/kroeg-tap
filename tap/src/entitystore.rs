@@ -74,3 +74,22 @@ where
     /// needed in rare cases inside the `MessageHandler`, mostly for `Update`.
     fn next(&mut self) -> &mut T;
 }
+
+pub trait QueueItem {
+    fn event(&self) -> &str;
+    fn data(&self) -> &str;
+}
+
+pub trait QueueStore {
+    type Item: QueueItem + 'static;
+    type Error: Error + Send + Sync + 'static;
+    type GetItemFuture: Future<Item = Option<Self::Item>, Error = Self::Error>;
+    type MarkFuture: Future<Item = (), Error = Self::Error>;
+
+    fn get_item(&self) -> Self::GetItemFuture;
+
+    fn mark_success(&self, item: Self::Item) -> Self::MarkFuture;
+    fn mark_failure(&self, item: Self::Item) -> Self::MarkFuture;
+
+    fn add(&self, event: String, data: String) -> Self::MarkFuture;
+}
