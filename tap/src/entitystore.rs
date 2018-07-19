@@ -80,7 +80,7 @@ pub trait QueueItem {
     fn data(&self) -> &str;
 }
 
-pub trait QueueStore {
+pub trait QueueStore: Debug + Send + 'static {
     type Item: QueueItem + 'static;
     type Error: Error + Send + Sync + 'static;
     type GetItemFuture: Future<Item = Option<Self::Item>, Error = Self::Error>;
