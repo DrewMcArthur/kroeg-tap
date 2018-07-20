@@ -83,8 +83,8 @@ pub trait QueueItem {
 pub trait QueueStore: Debug + Send + 'static {
     type Item: QueueItem + 'static;
     type Error: Error + Send + Sync + 'static;
-    type GetItemFuture: Future<Item = Option<Self::Item>, Error = Self::Error>;
-    type MarkFuture: Future<Item = (), Error = Self::Error>;
+    type GetItemFuture: Future<Item = Option<Self::Item>, Error = Self::Error> + Send + 'static;
+    type MarkFuture: Future<Item = (), Error = Self::Error> + Send + 'static;
 
     fn get_item(&self) -> Self::GetItemFuture;
 
