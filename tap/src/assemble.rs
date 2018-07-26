@@ -52,6 +52,15 @@ fn _get_collectionified<T: EntityStore>(
     }
 }
 
+const AVOID_ASSEMBLE: [&'static str; 6] = [
+    as2!(url),
+    ldp!(inbox),
+    as2!(outbox),
+    as2!(href),
+    as2!(followers),
+    as2!(following),
+];
+
 #[async(boxed_send)]
 /// Assemble a single [`Pointer`], avoiding cycles and repeating objects.
 fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
@@ -191,8 +200,18 @@ fn _assemble<T: EntityStore, R: Authorizer<T>>(
         let mut out = Vec::new();
 
         for value in values {
-            let (nstore, nauth, nitems, nseen, res) =
-                await!(_assemble_val(value, depth, items, store, authorizer, seen))?;
+            let (nstore, nauth, nitems, nseen, res) = await!(_assemble_val(
+                value,
+                if AVOID_ASSEMBLE.contains(&(&key as &str)) {
+                    999
+                } else {
+                    depth
+                },
+                items,
+                store,
+                authorizer,
+                seen
+            ))?;
             store = nstore;
             authorizer = nauth;
             items = nitems;
