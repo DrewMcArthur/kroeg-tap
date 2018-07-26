@@ -121,6 +121,21 @@ fn create_key_obj<T: EntityStore + 'static>(
     Ok((key, storeitem))
 }
 
+fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
+    let mut item = StoreItem::parse(
+        id,
+        json!({
+                "@id": id,
+                "@type": [as2!(OrderedCollection)],
+                as2!(partOf): [{"@id": owned}]
+            }),
+    ).unwrap();
+
+    item.meta()[kroeg!(box)].push(Pointer::Id(boxtype.to_owned()));
+
+    item
+}
+
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     type Error = CreateActorError<T>;
     type Future = Box<Future<Item = (Context, T, String), Error = CreateActorError<T>> + Send>;
@@ -167,15 +182,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Some("inbox".to_owned()),
             Some(elem.id().to_owned())
         )).map_err(CreateActorError::EntityStoreError)?;
-        let inbox = StoreItem::new(
-            inbox.to_owned(),
-            vec![(inbox.to_owned(), Entity::new(inbox.to_owned()))]
-                .into_iter()
-                .collect(),
-        );
 
-        let inbox = await!(store.put(inbox.id().to_owned(), inbox))
-            .map_err(CreateActorError::EntityStoreError)?;
+        let inbox = await!(store.put(
+            inbox.to_owned(),
+            create_collection(&inbox, elem.id(), ldp!(inbox))
+        )).map_err(CreateActorError::EntityStoreError)?;
 
         let (context, mut store, outbox) = await!(assign_id(
             context,
@@ -183,15 +194,10 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Some("outbox".to_owned()),
             Some(elem.id().to_owned())
         )).map_err(CreateActorError::EntityStoreError)?;
-        let outbox = StoreItem::new(
+        let outbox = await!(store.put(
             outbox.to_owned(),
-            vec![(outbox.to_owned(), Entity::new(outbox.to_owned()))]
-                .into_iter()
-                .collect(),
-        );
-
-        let outbox = await!(store.put(outbox.id().to_owned(), outbox))
-            .map_err(CreateActorError::EntityStoreError)?;
+            create_collection(&outbox, elem.id(), as2!(outbox))
+        )).map_err(CreateActorError::EntityStoreError)?;
 
         _set(
             elem.main_mut(),
