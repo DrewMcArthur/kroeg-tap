@@ -62,6 +62,7 @@ impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
             as2!(bcc),
             as2!(bto),
             as2!(actor),
+            as2!(object),
             as2!(attributedTo),
         ] {
             for it in &entity.main()[item] {

@@ -52,13 +52,17 @@ fn _get_collectionified<T: EntityStore>(
     }
 }
 
-const AVOID_ASSEMBLE: [&'static str; 6] = [
+const AVOID_ASSEMBLE: [&'static str; 10] = [
     as2!(url),
     ldp!(inbox),
     as2!(outbox),
     as2!(href),
     as2!(followers),
     as2!(following),
+    as2!(to),
+    as2!(cc),
+    as2!(bto),
+    as2!(bcc),
 ];
 
 #[async(boxed_send)]
