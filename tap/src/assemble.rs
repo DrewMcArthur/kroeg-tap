@@ -52,10 +52,11 @@ fn _get_collectionified<T: EntityStore>(
     }
 }
 
-const AVOID_ASSEMBLE: [&'static str; 10] = [
+const AVOID_ASSEMBLE: [&'static str; 12] = [
     as2!(url),
     ldp!(inbox),
     as2!(outbox),
+    as2!(sharedInbox),
     as2!(href),
     as2!(followers),
     as2!(following),
@@ -63,6 +64,7 @@ const AVOID_ASSEMBLE: [&'static str; 10] = [
     as2!(cc),
     as2!(bto),
     as2!(bcc),
+    "http://ostatus.org/#conversation",
 ];
 
 #[async(boxed_send)]
@@ -94,7 +96,8 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
                 let item = items.remove(&id).unwrap();
                 return await!(_assemble(item, depth + 1, items, store, authorizer, seen));
             }
-            if depth < 3 {
+            if depth < 3 && !id.starts_with("_:") {
+                // todo: properly deserialize graphs
                 store = if let Some(store) = store {
                     let (item, store) = await!(_get_collectionified(store, id.to_owned()))?;
                     if let Some(item) = item {
@@ -181,10 +184,11 @@ fn _assemble<T: EntityStore, R: Authorizer<T>>(
     ),
     T::Error,
 > {
-    seen.insert(item.id.to_owned());
-
     let mut map = JMap::new();
-    map.insert("@id".to_owned(), JValue::String(item.id.to_owned()));
+    if !item.id.starts_with("_:") {
+        seen.insert(item.id.to_owned());
+        map.insert("@id".to_owned(), JValue::String(item.id.to_owned()));
+    }
 
     if let Some(index) = item.index.to_owned() {
         map.insert("@index".to_owned(), JValue::String(index));
