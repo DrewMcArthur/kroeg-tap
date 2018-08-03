@@ -24,11 +24,11 @@ pub fn get_suggestion() -> String {
     result
 }
 
-const NAMES: [&'static str; 4] = [
+const NAMES: [&'static str; 3] = [
     as2!(preferredUsername),
     as2!(name),
     as2!(summary),
-    as2!(content),
+    //    as2!(content),
 ];
 
 fn translate_name(predicate: &str, nam: &str) -> String {
@@ -185,7 +185,12 @@ pub fn assign_id<T: EntityStore>(
     let parent = parent.unwrap_or(context.server_base.to_owned());
     let suggestion = suggestion.unwrap_or(get_suggestion());
 
-    let preliminary = format!("{}/{}", parent, suggestion);
+    let preliminary = format!(
+        "{}{}{}",
+        parent,
+        if parent.ends_with("/") { "" } else { "/" },
+        suggestion
+    );
     let test = await!(store.get(preliminary.to_owned()))?;
     if test.is_none() {
         return Ok((context, store, preliminary));
@@ -193,7 +198,12 @@ pub fn assign_id<T: EntityStore>(
 
     for _ in 1isize..3isize {
         let suggestion = get_suggestion();
-        let preliminary = format!("{}/{}", parent, suggestion);
+        let preliminary = format!(
+            "{}{}{}",
+            parent,
+            if parent.ends_with("/") { "" } else { "/" },
+            suggestion
+        );
         let test = await!(store.get(preliminary.to_owned()))?;
         if test.is_none() {
             return Ok((context, store, preliminary));
