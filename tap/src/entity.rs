@@ -113,6 +113,9 @@ impl StoreItem {
             .remove("@default")
             .unwrap();
         node_map.retain(|k, v| v.iter().next().is_some());
+        if !node_map.contains_key(main) {
+            node_map.insert(main.to_owned(), Entity::new(main.to_owned()));
+        }
         Ok(StoreItem {
             id: main.to_owned(),
             data: node_map,
@@ -120,7 +123,10 @@ impl StoreItem {
         })
     }
 
-    pub fn new(main: String, data: HashMap<String, Entity>) -> StoreItem {
+    pub fn new(main: String, mut data: HashMap<String, Entity>) -> StoreItem {
+        if !data.contains_key(&main) {
+            data.insert(main.to_owned(), Entity::new(main.to_owned()));
+        }
         StoreItem {
             id: main,
             data: data,
