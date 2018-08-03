@@ -140,7 +140,9 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                     if !equals_any_order(
                         &entity.main()[as2!(attributedTo)],
                         &elem.main()[as2!(actor)],
-                    ) {
+                    )
+                        && !elem.main().types.contains(&String::from(as2!(Update)))
+                    {
                         Err(RequiredEventsError::ActorAttributedToDoNotMatch)
                     } else {
                         Ok((context, entitystore, elem.id().to_owned()))
