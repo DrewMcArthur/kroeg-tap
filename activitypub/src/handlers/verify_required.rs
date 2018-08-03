@@ -95,10 +95,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
         let subject = context.user.subject.to_owned();
 
         let mut elem = match await!(entitystore.get(elem))
-            .map_err(|e| RequiredEventsError::EntityStoreError(e))? {
-                Some(val) => val,
-                None => return Err(RequiredEventsError::FailedToRetrieve)
-            };
+            .map_err(|e| RequiredEventsError::EntityStoreError(e))?
+        {
+            Some(val) => val,
+            None => return Err(RequiredEventsError::FailedToRetrieve),
+        };
 
         if !elem
             .main()
