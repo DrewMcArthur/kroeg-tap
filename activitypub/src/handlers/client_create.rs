@@ -5,7 +5,7 @@ use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 #[derive(Debug)]
 pub enum ClientCreateError<T>
@@ -135,7 +135,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             )?;
         }
 
-        await!(store.put(elem.id().to_owned(), elem)).map_err(ClientCreateError::EntityStoreError)?;
+        await!(store.put(elem.id().to_owned(), elem))
+            .map_err(ClientCreateError::EntityStoreError)?;
 
         Ok((context, store, root))
     }

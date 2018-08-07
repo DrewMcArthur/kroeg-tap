@@ -12,7 +12,7 @@ use openssl::error::ErrorStack;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 #[derive(Debug)]
 pub enum CreateActorError<T>
@@ -220,7 +220,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
 
         await!(store.put(keyobj.id().to_owned(), keyobj))
             .map_err(CreateActorError::EntityStoreError)?;
-        await!(store.put(elem.id().to_owned(), elem)).map_err(CreateActorError::EntityStoreError)?;
+        await!(store.put(elem.id().to_owned(), elem))
+            .map_err(CreateActorError::EntityStoreError)?;
         Ok((context, store, root))
     }
 }
