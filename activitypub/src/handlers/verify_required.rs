@@ -11,6 +11,7 @@ pub enum RequiredEventsError<T>
 where
     T: EntityStore,
 {
+    FailedToRetrieve,
     MissingObject,
     MissingActor,
 
@@ -26,6 +27,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            RequiredEventsError::FailedToRetrieve => {
+                write!(f, "Failed to retrieve object. Timeout?")
+            }
             RequiredEventsError::MissingObject => {
                 write!(f, "as:object predicate is missing or invalid")
             }
@@ -90,9 +94,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
     ) -> Result<(Context, T, String), RequiredEventsError<T>> {
         let subject = context.user.subject.to_owned();
 
-        let mut elem = await!(entitystore.get(elem))
+        let mut elem = match await!(entitystore.get(elem))
             .map_err(|e| RequiredEventsError::EntityStoreError(e))?
-            .expect("Missing the entity being handled, shouldn't happen");
+        {
+            Some(val) => val,
+            None => return Err(RequiredEventsError::FailedToRetrieve),
+        };
 
         if !elem
             .main()
@@ -133,7 +140,9 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                     if !equals_any_order(
                         &entity.main()[as2!(attributedTo)],
                         &elem.main()[as2!(actor)],
-                    ) {
+                    )
+                        && !elem.main().types.contains(&String::from(as2!(Update)))
+                    {
                         Err(RequiredEventsError::ActorAttributedToDoNotMatch)
                     } else {
                         Ok((context, entitystore, elem.id().to_owned()))

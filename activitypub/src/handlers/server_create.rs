@@ -12,6 +12,7 @@ pub enum ServerCreateError<T>
 where
     T: EntityStore,
 {
+    FailedToRetrieve,
     ExistingPredicate(String),
     MissingRequired(String),
     EntityStoreError(T::Error),
@@ -28,6 +29,7 @@ where
                 "The {} predicate is missing or occurs more than once",
                 val
             ),
+            ServerCreateError::FailedToRetrieve => write!(f, "Failed to retrieve object. Timeout?"),
             ServerCreateError::ExistingPredicate(ref val) => {
                 write!(f, "The {} predicate should not have been passed", val)
             }
@@ -73,9 +75,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
     ) -> Result<(Context, T, String), ServerCreateError<T>> {
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem))
-            .map_err(|e| ServerCreateError::EntityStoreError(e))?
-            .expect("Missing the entity being handled, shouldn't happen");
+        let mut elem =
+            match await!(store.get(elem)).map_err(|e| ServerCreateError::EntityStoreError(e))? {
+                Some(val) => val,
+                None => return Err(ServerCreateError::FailedToRetrieve),
+            };
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
             return Ok((context, store, root));
