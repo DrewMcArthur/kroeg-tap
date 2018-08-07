@@ -5,7 +5,7 @@ use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 #[derive(Debug)]
 pub enum ClientCreateError<T>

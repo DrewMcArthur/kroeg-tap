@@ -1,4 +1,4 @@
-#![feature(proc_macro, generators)]
+#![feature(generators, use_extern_macros)]
 
 #[macro_use]
 extern crate kroeg_tap;

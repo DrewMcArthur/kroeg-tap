@@ -12,7 +12,7 @@ use openssl::error::ErrorStack;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 #[derive(Debug)]
 pub enum CreateActorError<T>
