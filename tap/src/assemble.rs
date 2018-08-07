@@ -6,7 +6,7 @@ use serde_json::Map as JMap;
 use serde_json::Value as JValue;
 
 use entitystore::EntityStore;
-use futures::prelude::*;
+use futures::prelude::{await, *};
 
 use auth::Authorizer;
 
@@ -165,7 +165,7 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
 
 #[async(boxed_send)]
 fn _assemble<T: EntityStore, R: Authorizer<T>>(
-    mut item: Entity,
+    item: Entity,
     depth: u32,
     mut items: HashMap<String, Entity>,
     mut store: Option<T>,
@@ -296,7 +296,7 @@ pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError
     }
 
     let mut untangled = HashSet::new();
-    let mut roots: Vec<_> = tangle_map
+    let roots: Vec<_> = tangle_map
         .keys()
         .filter(|a| !a.starts_with("_:"))
         .map(|a| a.to_owned())

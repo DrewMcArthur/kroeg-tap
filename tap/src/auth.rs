@@ -4,7 +4,7 @@ use jsonld::nodemap::Pointer;
 use user::Context;
 
 use futures::future;
-use futures::prelude::*;
+use futures::prelude::{await, *};
 
 pub trait Authorizer<T: EntityStore>: Send + Sync + 'static {
     type Future: Future<Item = (T, bool), Error = T::Error> + 'static + Send;
@@ -15,7 +15,7 @@ pub trait Authorizer<T: EntityStore>: Send + Sync + 'static {
 impl<T: EntityStore> Authorizer<T> for () {
     type Future = future::FutureResult<(T, bool), T::Error>;
 
-    fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future {
+    fn can_show(&self, store: T, _: &StoreItem) -> Self::Future {
         future::ok((store, true))
     }
 }

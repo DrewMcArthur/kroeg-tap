@@ -112,7 +112,7 @@ impl StoreItem {
         let mut node_map = generate_node_map(entity, &mut DefaultNodeGenerator::new())?
             .remove("@default")
             .unwrap();
-        node_map.retain(|k, v| v.iter().next().is_some());
+        node_map.retain(|_, v| v.iter().next().is_some());
         Ok(StoreItem {
             id: main.to_owned(),
             data: node_map,
