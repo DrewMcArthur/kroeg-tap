@@ -19,9 +19,9 @@ fn _get_collectionified<T: EntityStore>(
 ) -> Result<(Option<StoreItem>, T), T::Error> {
     let without_query = id.split('&').next().unwrap().to_string();
     if without_query == id {
-        Ok((await!(store.get(id.to_owned()))?, store))
+        Ok((await!(store.get(id.to_owned(), false))?, store))
     } else {
-        if let Some(val) = await!(store.get(without_query.to_owned()))? {
+        if let Some(val) = await!(store.get(without_query.to_owned(), false))? {
             if !val
                 .main()
                 .types

@@ -71,7 +71,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(|e| ClientLikeError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
@@ -86,11 +86,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
             return Err(ClientLikeError::MissingRequired(as2!(object).to_owned()));
         };
 
-        let mut elem = await!(store.get(elem.to_owned()))
+        let mut elem = await!(store.get(elem.to_owned(), false))
             .map_err(ClientLikeError::EntityStoreError)?
             .unwrap();
 
-        let mut subj = await!(store.get(subject))
+        let mut subj = await!(store.get(subject, false))
             .map_err(ClientLikeError::EntityStoreError)?
             .unwrap();
 

@@ -70,7 +70,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
     ) -> Result<(Context, T, String), ServerFollowError<T>> {
         let root = elem.to_owned();
 
-        let mut relem = await!(store.get(elem))
+        let mut relem = await!(store.get(elem, false))
             .map_err(ServerFollowError::EntityStoreError)?
             .expect("Missing the entity being handled, shouldn't happen");
 
@@ -85,7 +85,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
         for obj in relem.main()[as2!(object)].clone() {
             if let Pointer::Id(id) = obj {
                 if let Some(mut elem) =
-                    await!(store.get(id.to_owned())).map_err(ServerFollowError::EntityStoreError)?
+                    await!(store.get(id.to_owned(), false)).map_err(ServerFollowError::EntityStoreError)?
                 {
                     // if it's not one of our follow requests, ignore
                     if !elem.is_owned(&context) {
@@ -114,7 +114,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
                                 ));
                             };
 
-                            let user = await!(store.get(user))
+                            let user = await!(store.get(user, false))
                                 .map_err(ServerFollowError::EntityStoreError)?
                                 .unwrap();
                             let following =
@@ -144,7 +144,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
                                 ));
                             };
 
-                            let user = await!(store.get(user))
+                            let user = await!(store.get(user, false))
                                 .map_err(ServerFollowError::EntityStoreError)?
                                 .unwrap();
                             let following =

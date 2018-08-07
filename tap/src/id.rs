@@ -190,7 +190,7 @@ pub fn assign_id<T: EntityStore>(
         if parent.ends_with("/") { "" } else { "/" },
         suggestion
     );
-    let test = await!(store.get(preliminary.to_owned()))?;
+    let test = await!(store.get(preliminary.to_owned(), false))?;
     if test.is_none() {
         return Ok((context, store, preliminary));
     }
@@ -203,7 +203,7 @@ pub fn assign_id<T: EntityStore>(
             if parent.ends_with("/") { "" } else { "/" },
             suggestion
         );
-        let test = await!(store.get(preliminary.to_owned()))?;
+        let test = await!(store.get(preliminary.to_owned(), false))?;
         if test.is_none() {
             return Ok((context, store, preliminary));
         }

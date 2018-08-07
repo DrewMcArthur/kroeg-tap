@@ -87,7 +87,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
     ) -> Result<(Context, T, String), ClientCreateError<T>> {
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(|e| ClientCreateError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
@@ -102,7 +102,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             return Err(ClientCreateError::MissingRequired(as2!(object).to_owned()));
         };
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(ClientCreateError::EntityStoreError)?
             .unwrap();
 

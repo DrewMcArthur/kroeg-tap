@@ -107,7 +107,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), AutomaticCreateError<T>> {
-        let mut elem = await!(entitystore.get(elem))
+        let mut elem = await!(entitystore.get(elem, false))
             .map_err(AutomaticCreateError::EntityStoreError)?
             .expect("Missing the entity being handled, shouldn't happen");
 

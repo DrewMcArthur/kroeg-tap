@@ -76,7 +76,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
         let root = elem.to_owned();
 
         let mut elem =
-            match await!(store.get(elem)).map_err(|e| ServerCreateError::EntityStoreError(e))? {
+            match await!(store.get(elem, false)).map_err(|e| ServerCreateError::EntityStoreError(e))? {
                 Some(val) => val,
                 None => return Err(ServerCreateError::FailedToRetrieve),
             };
@@ -92,13 +92,13 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
             return Err(ServerCreateError::MissingRequired(as2!(object).to_owned()));
         };
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(ServerCreateError::EntityStoreError)?
             .unwrap();
 
         for pointer in elem.main()[as2!(inReplyTo)].clone().into_iter() {
             if let Pointer::Id(id) = pointer {
-                let item = await!(store.get(id)).map_err(ServerCreateError::EntityStoreError)?;
+                let item = await!(store.get(id, false)).map_err(ServerCreateError::EntityStoreError)?;
 
                 if let Some(item) = item {
                     if item.is_owned(&context) {

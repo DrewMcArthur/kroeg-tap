@@ -150,7 +150,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     ) -> Result<(Context, T, String), CreateActorError<T>> {
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(|e| CreateActorError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
@@ -165,7 +165,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             return Err(CreateActorError::MissingRequired(as2!(object).to_owned()));
         };
 
-        let mut elem = await!(store.get(elem))
+        let mut elem = await!(store.get(elem, false))
             .map_err(CreateActorError::EntityStoreError)?
             .unwrap();
 

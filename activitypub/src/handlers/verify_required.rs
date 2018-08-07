@@ -94,7 +94,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
     ) -> Result<(Context, T, String), RequiredEventsError<T>> {
         let subject = context.user.subject.to_owned();
 
-        let mut elem = match await!(entitystore.get(elem))
+        let mut elem = match await!(entitystore.get(elem, false))
             .map_err(|e| RequiredEventsError::EntityStoreError(e))?
         {
             Some(val) => val,
@@ -134,7 +134,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
 
         match object.remove(0) {
             Pointer::Id(id) => {
-                if let Some(entity) = await!(entitystore.get(id))
+                if let Some(entity) = await!(entitystore.get(id, false))
                     .map_err(|e| RequiredEventsError::EntityStoreError(e))?
                 {
                     if !equals_any_order(

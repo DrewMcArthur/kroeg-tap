@@ -88,7 +88,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let mut relem = await!(store.get(elem))
+        let mut relem = await!(store.get(elem, false))
             .map_err(|e| ClientUndoError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
@@ -103,7 +103,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
             return Err(ClientUndoError::MissingRequired(as2!(object).to_owned()));
         };
 
-        let mut elem = await!(store.get(elem.to_owned()))
+        let mut elem = await!(store.get(elem.to_owned(), false))
             .map_err(ClientUndoError::EntityStoreError)?
             .unwrap();
 
@@ -111,7 +111,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
             return Err(ClientUndoError::DifferingActor);
         }
 
-        let mut subj = await!(store.get(subject))
+        let mut subj = await!(store.get(subject, false))
             .map_err(ClientUndoError::EntityStoreError)?
             .unwrap();
 

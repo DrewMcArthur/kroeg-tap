@@ -29,7 +29,7 @@ pub trait EntityStore: Debug + Send + 'static {
 
     /// Gets a single `StoreItem` from the store. Missing entities are no error,
     /// but instead returns a `None`.
-    fn get(&self, path: String) -> Self::GetFuture;
+    fn get(&self, path: String, local: bool) -> Self::GetFuture;
 
     /// Stores a single `StoreItem` into the store.
     ///
