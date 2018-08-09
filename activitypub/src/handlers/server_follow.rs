@@ -84,8 +84,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
         // for every object that is accepted or rejected,
         for obj in relem.main()[as2!(object)].clone() {
             if let Pointer::Id(id) = obj {
-                if let Some(mut elem) =
-                    await!(store.get(id.to_owned(), false)).map_err(ServerFollowError::EntityStoreError)?
+                if let Some(mut elem) = await!(store.get(id.to_owned(), false))
+                    .map_err(ServerFollowError::EntityStoreError)?
                 {
                     // if it's not one of our follow requests, ignore
                     if !elem.is_owned(&context) {
