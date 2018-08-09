@@ -19,9 +19,9 @@ fn _get_collectionified<T: EntityStore>(
 ) -> Result<(Option<StoreItem>, T), T::Error> {
     let without_query = id.split('&').next().unwrap().to_string();
     if without_query == id {
-        Ok((await!(store.get(id.to_owned(), false))?, store))
+        Ok((await!(store.get(id.to_owned(), true))?, store))
     } else {
-        if let Some(val) = await!(store.get(without_query.to_owned(), false))? {
+        if let Some(val) = await!(store.get(without_query.to_owned(), true))? {
             if !val
                 .main()
                 .types
@@ -88,7 +88,7 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
 > {
     match value {
         Pointer::Id(id) => {
-            if seen.contains(&id) {
+            if seen.contains(&id) && !id.starts_with("_:") {
                 let mut hash = JMap::new();
                 hash.insert("@id".to_owned(), JValue::String(id));
                 return Ok((store, authorizer, items, seen, JValue::Object(hash)));

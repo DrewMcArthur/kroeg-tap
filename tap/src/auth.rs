@@ -66,7 +66,7 @@ impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
             as2!(attributedTo),
         ] {
             for it in &entity.main()[item] {
-                if item != &as2!(actor) && item != &as2!(attributedTo) {
+                if item != &as2!(actor) && item != &as2!(attributedTo) && item != &as2!(object) {
                     has_non_actor = true;
                 }
 
