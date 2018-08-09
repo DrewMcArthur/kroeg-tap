@@ -154,20 +154,24 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             .map_err(|e| CreateActorError::EntityStoreError(e))?
             .expect("Missing the entity being handled, shouldn't happen");
 
-        if !elem.main().types.contains(&as2!(Create).to_owned()) {
-            return Ok((context, store, root));
-        }
+        let mut elem = if elem.main()[as2!(preferredUsername)].len() > 0
+            || elem.main().types.contains(&as2!(Person).to_owned())
+        {
+            elem
+        } else if !elem.main().types.contains(&as2!(Create).to_owned()) {
+            let elem = _ensure(elem.main(), as2!(object))?;
+            let elem = if let Pointer::Id(id) = elem {
+                id
+            } else {
+                return Err(CreateActorError::MissingRequired(as2!(object).to_owned()));
+            };
 
-        let elem = _ensure(elem.main(), as2!(object))?;
-        let elem = if let Pointer::Id(id) = elem {
-            id
+            await!(store.get(elem, false))
+                .map_err(CreateActorError::EntityStoreError)?
+                .unwrap()
         } else {
-            return Err(CreateActorError::MissingRequired(as2!(object).to_owned()));
+            return Ok((context, store, root));
         };
-
-        let mut elem = await!(store.get(elem, false))
-            .map_err(CreateActorError::EntityStoreError)?
-            .unwrap();
 
         if !elem.main().types.contains(&as2!(Person).to_owned()) {
             return Ok((context, store, root));
