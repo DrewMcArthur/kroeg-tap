@@ -75,11 +75,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
     ) -> Result<(Context, T, String), ServerCreateError<T>> {
         let root = elem.to_owned();
 
-        let mut elem =
-            match await!(store.get(elem, false)).map_err(|e| ServerCreateError::EntityStoreError(e))? {
-                Some(val) => val,
-                None => return Err(ServerCreateError::FailedToRetrieve),
-            };
+        let mut elem = match await!(store.get(elem, false))
+            .map_err(|e| ServerCreateError::EntityStoreError(e))?
+        {
+            Some(val) => val,
+            None => return Err(ServerCreateError::FailedToRetrieve),
+        };
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
             return Ok((context, store, root));

@@ -62,7 +62,7 @@ where
     }
 }
 
-pub struct VerifyRequiredEventsHandler;
+pub struct VerifyRequiredEventsHandler(pub bool);
 
 fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
     if a.len() != b.len() {
@@ -137,10 +137,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                 if let Some(entity) = await!(entitystore.get(id, false))
                     .map_err(|e| RequiredEventsError::EntityStoreError(e))?
                 {
-                    if !equals_any_order(
-                        &entity.main()[as2!(attributedTo)],
-                        &elem.main()[as2!(actor)],
-                    )
+                    if self.0
+                        && !equals_any_order(
+                            &entity.main()[as2!(attributedTo)],
+                            &elem.main()[as2!(actor)],
+                        )
                         && !elem.main().types.contains(&String::from(as2!(Update)))
                     {
                         Err(RequiredEventsError::ActorAttributedToDoNotMatch)
