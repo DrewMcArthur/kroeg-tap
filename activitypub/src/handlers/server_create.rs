@@ -100,7 +100,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
         for pointer in elem.main()[as2!(inReplyTo)].clone().into_iter() {
             if let Pointer::Id(id) = pointer {
                 let item =
-                    await!(store.get(id, false)).map_err(ServerCreateError::EntityStoreError)?;
+                    await!(store.get(id, true)).map_err(ServerCreateError::EntityStoreError)?;
 
                 if let Some(item) = item {
                     if item.is_owned(&context) {
