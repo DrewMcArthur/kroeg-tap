@@ -8,18 +8,11 @@ use std::fmt;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum ClientLikeError<T>
-where
-    T: EntityStore,
-{
+pub enum ClientLikeError {
     MissingRequired(String),
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for ClientLikeError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for ClientLikeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ClientLikeError::MissingRequired(ref val) => write!(
@@ -27,52 +20,40 @@ where
                 "The {} predicate is missing or occurs more than once",
                 val
             ),
-            ClientLikeError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for ClientLikeError<T>
-where
-    T: EntityStore,
-{
+impl Error for ClientLikeError {
     fn cause(&self) -> Option<&Error> {
         None
     }
 }
 
-fn _ensure<T: EntityStore + 'static>(
-    entity: &Entity,
-    name: &str,
-) -> Result<Pointer, ClientLikeError<T>> {
+fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
     if entity[name].len() == 1 {
         Ok(entity[name][0].to_owned())
     } else {
-        Err(ClientLikeError::MissingRequired(name.to_owned()))
+        Err(Box::new(ClientLikeError::MissingRequired(name.to_owned())))
     }
 }
 
 pub struct ClientLikeHandler;
 
 impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
-    type Error = ClientLikeError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = ClientLikeError<T>> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         context: Context,
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), ClientLikeError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem, false))
-            .map_err(|e| ClientLikeError::EntityStoreError(e))?
+            .map_err(Box::new)?
             .expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Like).to_owned()) {
@@ -83,20 +64,22 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(ClientLikeError::MissingRequired(as2!(object).to_owned()));
+            return Err(Box::new(ClientLikeError::MissingRequired(
+                as2!(object).to_owned(),
+            )));
         };
 
         let mut elem = await!(store.get(elem.to_owned(), false))
-            .map_err(ClientLikeError::EntityStoreError)?
+            .map_err(Box::new)?
             .unwrap();
 
         let mut subj = await!(store.get(subject, false))
-            .map_err(ClientLikeError::EntityStoreError)?
+            .map_err(Box::new)?
             .unwrap();
 
         if let Some(Pointer::Id(liked)) = subj.main()[as2!(liked)].iter().next().cloned() {
             await!(store.insert_collection(liked.to_owned(), elem.id().to_owned()))
-                .map_err(ClientLikeError::EntityStoreError)?
+                .map_err(Box::new)?
         }
 
         Ok((context, store, root))

@@ -8,19 +8,12 @@ use std::fmt;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum ClientCreateError<T>
-where
-    T: EntityStore,
-{
+pub enum ClientCreateError {
     ExistingPredicate(String),
     MissingRequired(String),
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for ClientCreateError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for ClientCreateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ClientCreateError::MissingRequired(ref val) => write!(
@@ -31,17 +24,11 @@ where
             ClientCreateError::ExistingPredicate(ref val) => {
                 write!(f, "The {} predicate should not have been passed", val)
             }
-            ClientCreateError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for ClientCreateError<T>
-where
-    T: EntityStore,
-{
+impl Error for ClientCreateError {
     fn cause(&self) -> Option<&Error> {
         None
     }
@@ -49,24 +36,25 @@ where
 
 pub struct ClientCreateHandler;
 
-fn _ensure<T: EntityStore + 'static>(
-    entity: &Entity,
-    name: &str,
-) -> Result<Pointer, ClientCreateError<T>> {
+fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
     if entity[name].len() == 1 {
         Ok(entity[name][0].to_owned())
     } else {
-        Err(ClientCreateError::MissingRequired(name.to_owned()))
+        Err(Box::new(ClientCreateError::MissingRequired(
+            name.to_owned(),
+        )))
     }
 }
 
-fn _set<T: EntityStore + 'static>(
+fn _set(
     entity: &mut Entity,
     name: &str,
     val: Pointer,
-) -> Result<(), ClientCreateError<T>> {
+) -> Result<(), Box<Error + Send + Sync + 'static>> {
     if entity[name].len() != 0 {
-        Err(ClientCreateError::ExistingPredicate(name.to_owned()))
+        Err(Box::new(ClientCreateError::ExistingPredicate(
+            name.to_owned(),
+        )))
     } else {
         entity.get_mut(name).push(val);
         Ok(())
@@ -74,21 +62,18 @@ fn _set<T: EntityStore + 'static>(
 }
 
 impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
-    type Error = ClientCreateError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = ClientCreateError<T>> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         mut context: Context,
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), ClientCreateError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem, false))
-            .map_err(|e| ClientCreateError::EntityStoreError(e))?
+            .map_err(Box::new)?
             .expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
@@ -99,12 +84,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(ClientCreateError::MissingRequired(as2!(object).to_owned()));
+            return Err(Box::new(ClientCreateError::MissingRequired(
+                as2!(object).to_owned(),
+            )));
         };
 
-        let mut elem = await!(store.get(elem, false))
-            .map_err(ClientCreateError::EntityStoreError)?
-            .unwrap();
+        let mut elem = await!(store.get(elem, false)).map_err(Box::new)?.unwrap();
 
         for itemname in &["likes", "shares", "replies"] {
             let (_context, _store, id) = await!(assign_id(
@@ -112,7 +97,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
                 store,
                 Some(itemname.to_string()),
                 Some(elem.id().to_owned())
-            )).map_err(ClientCreateError::EntityStoreError)?;
+            )).map_err(Box::new)?;
 
             context = _context;
             store = _store;
@@ -126,7 +111,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             }),
             ).unwrap();
 
-            await!(store.put(id.to_owned(), item)).map_err(ClientCreateError::EntityStoreError)?;
+            await!(store.put(id.to_owned(), item)).map_err(Box::new)?;
 
             _set(
                 elem.main_mut(),
@@ -135,8 +120,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             )?;
         }
 
-        await!(store.put(elem.id().to_owned(), elem))
-            .map_err(ClientCreateError::EntityStoreError)?;
+        await!(store.put(elem.id().to_owned(), elem)).map_err(Box::new)?;
 
         Ok((context, store, root))
     }

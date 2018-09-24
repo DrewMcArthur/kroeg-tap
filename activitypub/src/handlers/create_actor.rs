@@ -15,20 +15,13 @@ use openssl::rsa::Rsa;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum CreateActorError<T>
-where
-    T: EntityStore,
-{
+pub enum CreateActorError {
     MissingRequired(String),
     ExistingPredicate(String),
     OpenSSLError(ErrorStack),
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for CreateActorError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for CreateActorError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             CreateActorError::MissingRequired(ref val) => write!(
@@ -42,17 +35,11 @@ where
             CreateActorError::OpenSSLError(ref err) => {
                 write!(f, "failed to do RSA key magic: {}", err)
             }
-            CreateActorError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for CreateActorError<T>
-where
-    T: EntityStore,
-{
+impl Error for CreateActorError {
     fn cause(&self) -> Option<&Error> {
         None
     }
@@ -60,43 +47,42 @@ where
 
 pub struct CreateActorHandler;
 
-fn _ensure<T: EntityStore + 'static>(
-    entity: &Entity,
-    name: &str,
-) -> Result<Pointer, CreateActorError<T>> {
+fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
     if entity[name].len() == 1 {
         Ok(entity[name][0].to_owned())
     } else {
-        Err(CreateActorError::MissingRequired(name.to_owned()))
+        Err(Box::new(CreateActorError::MissingRequired(name.to_owned())))
     }
 }
 
-fn _set<T: EntityStore + 'static>(
+fn _set(
     entity: &mut Entity,
     name: &str,
     val: Pointer,
-) -> Result<(), CreateActorError<T>> {
+) -> Result<(), Box<Error + Send + Sync + 'static>> {
     if entity[name].len() != 0 {
-        Err(CreateActorError::ExistingPredicate(name.to_owned()))
+        Err(Box::new(CreateActorError::ExistingPredicate(
+            name.to_owned(),
+        )))
     } else {
         entity.get_mut(name).push(val);
         Ok(())
     }
 }
 
-fn create_key_obj<T: EntityStore + 'static>(
+fn create_key_obj(
     owner: &str,
-) -> Result<(Rsa<Private>, StoreItem), CreateActorError<T>> {
+) -> Result<(Rsa<Private>, StoreItem), Box<Error + Send + Sync + 'static>> {
     let id = format!("{}#key", owner);
 
-    let key = Rsa::generate(2048).map_err(CreateActorError::OpenSSLError)?;
+    let key = Rsa::generate(2048).map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?;
     let private_pem = String::from_utf8(
         key.private_key_to_pem()
-            .map_err(CreateActorError::OpenSSLError)?,
+            .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
     ).unwrap();
     let public_pem = String::from_utf8(
         key.public_key_to_pem()
-            .map_err(CreateActorError::OpenSSLError)?,
+            .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
     ).unwrap();
 
     let mut keyobj = Entity::new(id.to_owned());
@@ -137,21 +123,18 @@ fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
 }
 
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
-    type Error = CreateActorError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = CreateActorError<T>> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         context: Context,
         store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), CreateActorError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let root = elem.to_owned();
 
         let mut elem = await!(store.get(elem, false))
-            .map_err(|e| CreateActorError::EntityStoreError(e))?
+            .map_err(Box::new)?
             .expect("Missing the entity being handled, shouldn't happen");
 
         let mut elem = if elem.main()[as2!(preferredUsername)].len() > 0
@@ -163,12 +146,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             let elem = if let Pointer::Id(id) = elem {
                 id
             } else {
-                return Err(CreateActorError::MissingRequired(as2!(object).to_owned()));
+                return Err(Box::new(CreateActorError::MissingRequired(
+                    as2!(object).to_owned(),
+                )));
             };
 
-            await!(store.get(elem, false))
-                .map_err(CreateActorError::EntityStoreError)?
-                .unwrap()
+            await!(store.get(elem, false)).map_err(Box::new)?.unwrap()
         } else {
             return Ok((context, store, root));
         };
@@ -185,23 +168,23 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             store,
             Some("inbox".to_owned()),
             Some(elem.id().to_owned())
-        )).map_err(CreateActorError::EntityStoreError)?;
+        )).map_err(Box::new)?;
 
         let inbox = await!(store.put(
             inbox.to_owned(),
             create_collection(&inbox, elem.id(), ldp!(inbox))
-        )).map_err(CreateActorError::EntityStoreError)?;
+        )).map_err(Box::new)?;
 
         let (context, mut store, outbox) = await!(assign_id(
             context,
             store,
             Some("outbox".to_owned()),
             Some(elem.id().to_owned())
-        )).map_err(CreateActorError::EntityStoreError)?;
+        )).map_err(Box::new)?;
         let outbox = await!(store.put(
             outbox.to_owned(),
             create_collection(&outbox, elem.id(), as2!(outbox))
-        )).map_err(CreateActorError::EntityStoreError)?;
+        )).map_err(Box::new)?;
 
         _set(
             elem.main_mut(),
@@ -222,10 +205,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(keyobj.id().to_owned()),
         )?;
 
-        await!(store.put(keyobj.id().to_owned(), keyobj))
-            .map_err(CreateActorError::EntityStoreError)?;
-        await!(store.put(elem.id().to_owned(), elem))
-            .map_err(CreateActorError::EntityStoreError)?;
+        await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(Box::new)?;
+        await!(store.put(elem.id().to_owned(), elem)).map_err(Box::new)?;
         Ok((context, store, root))
     }
 }

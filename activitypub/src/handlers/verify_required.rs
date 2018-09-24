@@ -7,10 +7,7 @@ use std::fmt;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum RequiredEventsError<T>
-where
-    T: EntityStore,
-{
+pub enum RequiredEventsError {
     FailedToRetrieve,
     MissingObject,
     MissingActor,
@@ -18,13 +15,9 @@ where
     MayNotPublish,
     NotAllowedtoAct,
     ActorAttributedToDoNotMatch,
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for RequiredEventsError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for RequiredEventsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RequiredEventsError::FailedToRetrieve => {
@@ -46,17 +39,11 @@ where
             RequiredEventsError::ActorAttributedToDoNotMatch => {
                 write!(f, "as:actor and as:attributedTo in the object do not match")
             }
-            RequiredEventsError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for RequiredEventsError<T>
-where
-    T: EntityStore,
-{
+impl Error for RequiredEventsError {
     fn cause(&self) -> Option<&Error> {
         None
     }
@@ -80,25 +67,20 @@ fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
 
 const APPLIES_TO_TYPES: [&'static str; 3] = [as2!(Create), as2!(Update), as2!(Delete)];
 
-impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
-    type Error = RequiredEventsError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = RequiredEventsError<T>> + Send>;
-
+impl VerifyRequiredEventsHandler {
     #[async(boxed_send)]
-    fn handle(
-        self,
+    fn _handle<T: EntityStore + 'static>(
+        is_local: bool,
         context: Context,
         entitystore: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), RequiredEventsError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let subject = context.user.subject.to_owned();
 
-        let mut elem = match await!(entitystore.get(elem, false))
-            .map_err(|e| RequiredEventsError::EntityStoreError(e))?
-        {
+        let mut elem = match await!(entitystore.get(elem, false)).map_err(Box::new)? {
             Some(val) => val,
-            None => return Err(RequiredEventsError::FailedToRetrieve),
+            None => return Err(Box::new(RequiredEventsError::FailedToRetrieve)),
         };
 
         if !elem
@@ -113,47 +95,58 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
         let actors = elem.main().get(as2!(actor)).clone();
 
         if actors.len() != 1 {
-            return Err(RequiredEventsError::MissingActor);
+            return Err(Box::new(RequiredEventsError::MissingActor));
         } else {
             match actors[0] {
                 Pointer::Id(ref subj) => {
                     if subj != &subject {
-                        return Err(RequiredEventsError::NotAllowedtoAct);
+                        return Err(Box::new(RequiredEventsError::NotAllowedtoAct));
                     }
                 }
 
-                _ => return Err(RequiredEventsError::NotAllowedtoAct),
+                _ => return Err(Box::new(RequiredEventsError::NotAllowedtoAct)),
             }
         }
 
         let mut object = elem.main().get(as2!(object)).clone();
 
         if object.len() != 1 {
-            return Err(RequiredEventsError::MissingObject);
+            return Err(Box::new(RequiredEventsError::MissingObject));
         }
 
         match object.remove(0) {
             Pointer::Id(id) => {
-                if let Some(entity) = await!(entitystore.get(id, false))
-                    .map_err(|e| RequiredEventsError::EntityStoreError(e))?
-                {
-                    if self.0
+                if let Some(entity) = await!(entitystore.get(id, false)).map_err(Box::new)? {
+                    if is_local
                         && !equals_any_order(
                             &entity.main()[as2!(attributedTo)],
                             &elem.main()[as2!(actor)],
                         )
                         && !elem.main().types.contains(&String::from(as2!(Update)))
                     {
-                        Err(RequiredEventsError::ActorAttributedToDoNotMatch)
+                        Err(Box::new(RequiredEventsError::ActorAttributedToDoNotMatch))
                     } else {
                         Ok((context, entitystore, elem.id().to_owned()))
                     }
                 } else {
-                    Err(RequiredEventsError::MissingObject)
+                    Err(Box::new(RequiredEventsError::MissingObject))
                 }
             }
 
-            _ => Err(RequiredEventsError::MissingObject),
+            _ => Err(Box::new(RequiredEventsError::MissingObject)),
         }
+    }
+}
+
+impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
+    fn handle(
+        &self,
+        context: Context,
+        entitystore: T,
+        inbox: String,
+        elem: String,
+    ) -> Box<Future<Item = (Context, T, String), Error = Box<Error + Send + Sync + 'static>> + Send>
+    {
+        VerifyRequiredEventsHandler::_handle::<T>(self.0, context, entitystore, inbox, elem)
     }
 }

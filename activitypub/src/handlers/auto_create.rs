@@ -9,36 +9,23 @@ use futures::prelude::{await, *};
 pub struct AutomaticCreateHandler;
 
 #[derive(Debug)]
-pub enum AutomaticCreateError<T>
-where
-    T: EntityStore,
-{
+pub enum AutomaticCreateError {
     NoObject,
     ImproperActivity,
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for AutomaticCreateError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for AutomaticCreateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             AutomaticCreateError::NoObject => write!(f, "No as:object!"),
             AutomaticCreateError::ImproperActivity => {
                 write!(f, "Improper activity, did you forget the as:actor?")
             }
-            AutomaticCreateError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for AutomaticCreateError<T>
-where
-    T: EntityStore,
-{
+impl Error for AutomaticCreateError {
     fn cause(&self) -> Option<&Error> {
         None
     }
@@ -96,31 +83,28 @@ fn object_type(entity: &StoreItem) -> ObjectType {
 }
 
 impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
-    type Error = AutomaticCreateError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = Self::Error> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         mut context: Context,
         mut entitystore: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), AutomaticCreateError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let mut elem = await!(entitystore.get(elem, false))
-            .map_err(AutomaticCreateError::EntityStoreError)?
+            .map_err(Box::new)?
             .expect("Missing the entity being handled, shouldn't happen");
 
         match object_type(&elem) {
             ObjectType::Activity => Ok((context, entitystore, elem.id().to_owned())),
-            ObjectType::ImproperActivity => Err(AutomaticCreateError::ImproperActivity),
+            ObjectType::ImproperActivity => Err(Box::new(AutomaticCreateError::ImproperActivity)),
             ObjectType::Object => {
                 let (_context, _store, id) = await!(assign_id(
                     context,
                     entitystore,
                     Some("activity".to_string()),
                     Some(elem.id().to_owned())
-                )).map_err(AutomaticCreateError::EntityStoreError)?;
+                )).map_err(Box::new)?;
 
                 context = _context;
                 entitystore = _store;
@@ -159,8 +143,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     .get_mut(as2!(audience))
                     .append(&mut elem.main_mut()[as2!(audience)].clone());
 
-                await!(entitystore.put(id.to_owned(), entity))
-                    .map_err(AutomaticCreateError::EntityStoreError)?;
+                await!(entitystore.put(id.to_owned(), entity)).map_err(Box::new)?;
 
                 Ok((context, entitystore, id))
             }

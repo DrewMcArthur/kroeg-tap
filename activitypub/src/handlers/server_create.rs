@@ -8,20 +8,13 @@ use std::fmt;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum ServerCreateError<T>
-where
-    T: EntityStore,
-{
+pub enum ServerCreateError {
     FailedToRetrieve,
     ExistingPredicate(String),
     MissingRequired(String),
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for ServerCreateError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for ServerCreateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ServerCreateError::MissingRequired(ref val) => write!(
@@ -33,17 +26,11 @@ where
             ServerCreateError::ExistingPredicate(ref val) => {
                 write!(f, "The {} predicate should not have been passed", val)
             }
-            ServerCreateError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for ServerCreateError<T>
-where
-    T: EntityStore,
-{
+impl Error for ServerCreateError {
     fn cause(&self) -> Option<&Error> {
         None
     }
@@ -51,35 +38,29 @@ where
 
 pub struct ServerCreateHandler;
 
-fn _ensure<T: EntityStore + 'static>(
-    entity: &Entity,
-    name: &str,
-) -> Result<Pointer, ServerCreateError<T>> {
+fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
     if entity[name].len() == 1 {
         Ok(entity[name][0].to_owned())
     } else {
-        Err(ServerCreateError::MissingRequired(name.to_owned()))
+        Err(Box::new(ServerCreateError::MissingRequired(
+            name.to_owned(),
+        )))
     }
 }
 impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
-    type Error = ServerCreateError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = ServerCreateError<T>> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         context: Context,
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), ServerCreateError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let root = elem.to_owned();
 
-        let mut elem = match await!(store.get(elem, false))
-            .map_err(|e| ServerCreateError::EntityStoreError(e))?
-        {
+        let mut elem = match await!(store.get(elem, false)).map_err(Box::new)? {
             Some(val) => val,
-            None => return Err(ServerCreateError::FailedToRetrieve),
+            None => return Err(Box::new(ServerCreateError::FailedToRetrieve)),
         };
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
@@ -90,17 +71,16 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(ServerCreateError::MissingRequired(as2!(object).to_owned()));
+            return Err(Box::new(ServerCreateError::MissingRequired(
+                as2!(object).to_owned(),
+            )));
         };
 
-        let mut elem = await!(store.get(elem, false))
-            .map_err(ServerCreateError::EntityStoreError)?
-            .unwrap();
+        let mut elem = await!(store.get(elem, false)).map_err(Box::new)?.unwrap();
 
         for pointer in elem.main()[as2!(inReplyTo)].clone().into_iter() {
             if let Pointer::Id(id) = pointer {
-                let item =
-                    await!(store.get(id, true)).map_err(ServerCreateError::EntityStoreError)?;
+                let item = await!(store.get(id, true)).map_err(Box::new)?;
 
                 if let Some(item) = item {
                     if item.is_owned(&context) {
@@ -108,7 +88,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
                             item.main()[as2!(replies)].iter().next().cloned()
                         {
                             await!(store.insert_collection(replies, elem.id().to_owned()))
-                                .map_err(ServerCreateError::EntityStoreError)?;
+                                .map_err(Box::new)?;
                         }
                     }
                 }

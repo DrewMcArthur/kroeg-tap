@@ -8,18 +8,11 @@ use std::fmt;
 use futures::prelude::{await, *};
 
 #[derive(Debug)]
-pub enum ServerFollowError<T>
-where
-    T: EntityStore,
-{
+pub enum ServerFollowError {
     MissingRequired(String),
-    EntityStoreError(T::Error),
 }
 
-impl<T> fmt::Display for ServerFollowError<T>
-where
-    T: EntityStore,
-{
+impl fmt::Display for ServerFollowError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ServerFollowError::MissingRequired(ref val) => write!(
@@ -27,51 +20,41 @@ where
                 "The {} predicate is missing or occurs more than once",
                 val
             ),
-            ServerFollowError::EntityStoreError(ref err) => {
-                write!(f, "failed to get value from the entity store: {}", err)
-            }
         }
     }
 }
 
-impl<T> Error for ServerFollowError<T>
-where
-    T: EntityStore,
-{
+impl Error for ServerFollowError {
     fn cause(&self) -> Option<&Error> {
         None
     }
 }
 
-fn _ensure<T: EntityStore + 'static>(
-    entity: &Entity,
-    name: &str,
-) -> Result<Pointer, ServerFollowError<T>> {
+fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
     if entity[name].len() == 1 {
         Ok(entity[name][0].to_owned())
     } else {
-        Err(ServerFollowError::MissingRequired(name.to_owned()))
+        Err(Box::new(ServerFollowError::MissingRequired(
+            name.to_owned(),
+        )))
     }
 }
 
 pub struct ServerFollowHandler;
 
 impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
-    type Error = ServerFollowError<T>;
-    type Future = Box<Future<Item = (Context, T, String), Error = ServerFollowError<T>> + Send>;
-
     #[async(boxed_send)]
     fn handle(
-        self,
+        &self,
         context: Context,
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), ServerFollowError<T>> {
+    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
         let root = elem.to_owned();
 
         let mut relem = await!(store.get(elem, false))
-            .map_err(ServerFollowError::EntityStoreError)?
+            .map_err(Box::new)?
             .expect("Missing the entity being handled, shouldn't happen");
 
         let is_accept = relem.main().types.contains(&as2!(Accept).to_owned());
@@ -84,9 +67,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
         // for every object that is accepted or rejected,
         for obj in relem.main()[as2!(object)].clone() {
             if let Pointer::Id(id) = obj {
-                if let Some(mut elem) = await!(store.get(id.to_owned(), true))
-                    .map_err(ServerFollowError::EntityStoreError)?
-                {
+                if let Some(mut elem) = await!(store.get(id.to_owned(), true)).map_err(Box::new)? {
                     // if it's not one of our follow requests, ignore
                     if !elem.is_owned(&context) {
                         continue;
@@ -109,25 +90,23 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
                             {
                                 id
                             } else {
-                                return Err(ServerFollowError::MissingRequired(
+                                return Err(Box::new(ServerFollowError::MissingRequired(
                                     as2!(object).to_owned(),
-                                ));
+                                )));
                             };
 
-                            let user = await!(store.get(user, false))
-                                .map_err(ServerFollowError::EntityStoreError)?
-                                .unwrap();
+                            let user = await!(store.get(user, false)).map_err(Box::new)?.unwrap();
                             let following =
                                 if let Pointer::Id(id) = _ensure(user.main(), as2!(following))? {
                                     id
                                 } else {
-                                    return Err(ServerFollowError::MissingRequired(
+                                    return Err(Box::new(ServerFollowError::MissingRequired(
                                         as2!(following).to_owned(),
-                                    ));
+                                    )));
                                 };
 
                             await!(store.insert_collection(following, root.to_owned()))
-                                .map_err(ServerFollowError::EntityStoreError)?;
+                                .map_err(Box::new)?;
                             changed = true;
                         }
 
@@ -139,32 +118,29 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerFollowHandler {
                             {
                                 id
                             } else {
-                                return Err(ServerFollowError::MissingRequired(
+                                return Err(Box::new(ServerFollowError::MissingRequired(
                                     as2!(object).to_owned(),
-                                ));
+                                )));
                             };
 
-                            let user = await!(store.get(user, false))
-                                .map_err(ServerFollowError::EntityStoreError)?
-                                .unwrap();
+                            let user = await!(store.get(user, false)).map_err(Box::new)?.unwrap();
                             let following =
                                 if let Pointer::Id(id) = _ensure(user.main(), as2!(following))? {
                                     id
                                 } else {
-                                    return Err(ServerFollowError::MissingRequired(
+                                    return Err(Box::new(ServerFollowError::MissingRequired(
                                         as2!(following).to_owned(),
-                                    ));
+                                    )));
                                 };
 
                             await!(store.insert_collection(following, root.to_owned()))
-                                .map_err(ServerFollowError::EntityStoreError)?;
+                                .map_err(Box::new)?;
 
                             changed = true;
                         }
 
                         if changed {
-                            await!(store.put(id.to_owned(), elem))
-                                .map_err(ServerFollowError::EntityStoreError)?;
+                            await!(store.put(id.to_owned(), elem)).map_err(Box::new)?;
                         }
                     } else {
                         // already rejected, ignore
