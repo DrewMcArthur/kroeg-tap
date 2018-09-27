@@ -7,6 +7,8 @@ use futures::prelude::*;
 use std::error::Error;
 use std::fmt::Debug;
 
+use super::QuadQuery;
+
 /// An entity store, storing JSON-LD `Entity` objects.
 pub trait EntityStore: Debug + Send + 'static {
     /// The error type that will be returned if this store fails to get or put
@@ -27,6 +29,9 @@ pub trait EntityStore: Debug + Send + 'static {
     /// The `Future` that is returned when writing into a collection.
     type WriteCollectionFuture: Future<Item = (), Error = Self::Error> + 'static + Send;
 
+    /// The `Future` that is returned when querying the database.
+    type QueryFuture: Future<Item = Vec<Vec<String>>, Error = Self::Error> + 'static + Send;
+
     /// Gets a single `StoreItem` from the store. Missing entities are no error,
     /// but instead returns a `None`.
     fn get(&self, path: String, local: bool) -> Self::GetFuture;
@@ -36,6 +41,11 @@ pub trait EntityStore: Debug + Send + 'static {
     /// To delete an Entity, set its type to as:Tombstone. This may
     /// instantly remove it, or queue it for possible future deletion.
     fn put(&mut self, path: String, item: StoreItem) -> Self::StoreFuture;
+
+    /// Queries the entire store for a specific set of parameters.
+    /// The return value is a list for every result in the database that matches the query.
+    /// The array elements are in numeric order of the placeholders.
+    fn query(&self, query: Vec<QuadQuery>) -> Self::QueryFuture;
 
     /// Reads N amount of items from the collection corresponding to a specific ID. If a cursor is passed,
     /// it can be used to paginate.
