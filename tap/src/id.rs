@@ -128,10 +128,16 @@ pub fn assign_ids<T: EntityStore>(
             let (parent, id) = to_do.remove(0);
             if let Some(mut newitem) = value.remove(&id) {
                 if newitem.iter().next().is_some() {
-                    let suggestion = shortname_suggestion(&newitem);
-                    let (c, s, r) = await!(assign_id(context, store, suggestion, parent))?;
-                    context = c;
-                    store = s;
+                    let mut suggestion = shortname_suggestion(&newitem);
+                    let r = loop {
+                        let (c, s, r) = await!(assign_id(context, store, suggestion, parent.clone()))?;
+                        context = c;
+                        store = s;
+                        suggestion = None;
+                        if !out.contains_key(&r) {
+                            break r;
+                        }
+                    };
 
                     let mut found = HashSet::new();
                     remap.insert(newitem.id.to_owned(), r.to_owned());
