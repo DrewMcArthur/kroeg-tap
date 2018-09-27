@@ -122,6 +122,37 @@ fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
     item
 }
 
+#[async]
+fn assign_and_store<T: EntityStore + 'static>(
+    context: Context,
+    mut store: T,
+    parent: String,
+    object: String,
+) -> Result<(Context, T, String), T::Error> {
+    let (context, mut store, collection) = await!(assign_id(
+        context,
+        store,
+        Some(object),
+        Some(parent.to_owned())
+    ))?;
+
+    let collection = await!(
+        store.put(
+            collection.to_owned(),
+            StoreItem::parse(
+                &collection,
+                json!({
+                "@id": &collection,
+                "@type": [as2!(OrderedCollection)],
+                as2!(partOf): [{"@id": &parent}]
+            })
+            ).unwrap()
+        )
+    )?;
+
+    Ok((context, store, collection.id().to_owned()))
+}
+
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     #[async(boxed_send)]
     fn handle(
@@ -196,6 +227,23 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             as2!(outbox),
             Pointer::Id(outbox.id().to_owned()),
         )?;
+
+        let (context, mut store, following) = await!(assign_and_store(
+            context,
+            store,
+            elem.id().to_owned(),
+            String::from("following")
+        )).map_err(Box::new)?;
+        let (context, mut store, followers) = await!(assign_and_store(
+            context,
+            store,
+            elem.id().to_owned(),
+            String::from("followers")
+        )).map_err(Box::new)?;
+
+        _set(elem.main_mut(), as2!(following), Pointer::Id(following))?;
+
+        _set(elem.main_mut(), as2!(followers), Pointer::Id(followers))?;
 
         let (_, keyobj) = create_key_obj(elem.id())?;
 
