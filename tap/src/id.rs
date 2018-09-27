@@ -11,23 +11,29 @@ use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-pub fn get_suggestion() -> String {
+const ALPHABET: [char; 32] = [
+    'y', 'b', 'n', 'd', 'r', 'f', 'g', '8',
+    'e', 'j', 'k', 'm', 'c', 'p', 'q', 'x',
+    'o', 't', '1', 'u', 'w', 'i', 's', 'z',
+    'a', '3', '4', '5', 'h', '7', '6', '9',
+];
+
+pub fn get_suggestion(depth: u32) -> String {
     let mut result = String::new();
-    let mut data: [u8; 5] = [0; 5];
+    let mut data: [u8; 8] = [0; 8];
 
     thread_rng().fill(&mut data);
-    for byte in data.iter() {
-        write!(&mut result, "{:x}", byte).unwrap();
-    }
+    let data: String = data.iter().map(|f| ALPHABET[(*f & 0b11111) as usize]).collect();
 
-    result
+    if depth == 0 {
+        format!("{}-{}", &data[..4], &data[4..])
+    } else {
+        format!("{}", &data[..4])
+    }
 }
 
-const NAMES: [&'static str; 3] = [
+const NAMES: [&'static str; 1] = [
     as2!(preferredUsername),
-    as2!(name),
-    as2!(summary),
-    //    as2!(content),
 ];
 
 fn translate_name(predicate: &str, nam: &str) -> String {
@@ -121,16 +127,16 @@ pub fn assign_ids<T: EntityStore>(
     let roots: Vec<_> = data.keys().map(|f| f.to_owned()).collect();
     for (_, mut value) in data {
         let mut to_run = HashSet::new();
-        let mut to_do: Vec<(Option<String>, String)> = Vec::new();
-        to_do.push((parent.to_owned(), value.id.to_owned()));
+        let mut to_do: Vec<(Option<String>, String, u32)> = Vec::new();
+        to_do.push((parent.to_owned(), value.id.to_owned(), 0));
 
         while to_do.len() > 0 {
-            let (parent, id) = to_do.remove(0);
+            let (parent, id, depth) = to_do.remove(0);
             if let Some(mut newitem) = value.remove(&id) {
                 if newitem.iter().next().is_some() {
                     let mut suggestion = shortname_suggestion(&newitem);
                     let r = loop {
-                        let (c, s, r) = await!(assign_id(context, store, suggestion, parent.clone()))?;
+                        let (c, s, r) = await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
                         context = c;
                         store = s;
                         suggestion = None;
@@ -148,7 +154,7 @@ pub fn assign_ids<T: EntityStore>(
                     for kv in found {
                         if !to_run.contains(&kv) {
                             to_run.insert(kv.to_owned());
-                            to_do.push((Some(r.to_owned()), kv));
+                            to_do.push((Some(r.to_owned()), kv, depth + 1));
                         }
                     }
 
@@ -186,9 +192,10 @@ pub fn assign_id<T: EntityStore>(
     store: T,
     suggestion: Option<String>,
     parent: Option<String>,
+    depth: u32,
 ) -> Result<(Context, T, String), T::Error> {
     let parent = parent.unwrap_or(context.server_base.to_owned());
-    let suggestion = suggestion.unwrap_or(get_suggestion());
+    let suggestion = suggestion.unwrap_or(get_suggestion(depth));
 
     let preliminary = format!(
         "{}{}{}",
@@ -202,7 +209,7 @@ pub fn assign_id<T: EntityStore>(
     }
 
     for _ in 1isize..3isize {
-        let suggestion = get_suggestion();
+        let suggestion = get_suggestion(depth);
         let preliminary = format!(
             "{}{}{}",
             parent,

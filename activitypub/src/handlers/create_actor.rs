@@ -133,7 +133,8 @@ fn assign_and_store<T: EntityStore + 'static>(
         context,
         store,
         Some(object),
-        Some(parent.to_owned())
+        Some(parent.to_owned()),
+        1
     ))?;
 
     let collection = await!(
@@ -198,7 +199,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             context,
             store,
             Some("inbox".to_owned()),
-            Some(elem.id().to_owned())
+            Some(elem.id().to_owned()),
+            1
         )).map_err(Box::new)?;
 
         let inbox = await!(store.put(
@@ -210,7 +212,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             context,
             store,
             Some("outbox".to_owned()),
-            Some(elem.id().to_owned())
+            Some(elem.id().to_owned()),
+            1
         )).map_err(Box::new)?;
         let outbox = await!(store.put(
             outbox.to_owned(),

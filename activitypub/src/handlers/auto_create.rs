@@ -103,7 +103,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     context,
                     entitystore,
                     Some("activity".to_string()),
-                    Some(elem.id().to_owned())
+                    Some(elem.id().to_owned()),
+                    1
                 )).map_err(Box::new)?;
 
                 context = _context;
