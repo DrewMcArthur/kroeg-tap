@@ -10,60 +10,60 @@ use std::fmt::Debug;
 use super::QuadQuery;
 
 /// An entity store, storing JSON-LD `Entity` objects.
-pub trait EntityStore: Debug + Send + 'static {
+pub trait EntityStore: Debug + Send + Sized + 'static {
     /// The error type that will be returned if this store fails to get or put
     /// the `StoreItem`
     type Error: Error + Send + Sync + 'static;
 
     /// The `Future` that is returned when `get`ting a `StoreItem`.
-    type GetFuture: Future<Item = Option<StoreItem>, Error = Self::Error> + 'static + Send;
+    type GetFuture: Future<Item = (Option<StoreItem>, Self), Error = (Self::Error, Self)> + 'static + Send;
 
     /// The `Future` that is returned when `put`ting a `StoreItem`.
-    type StoreFuture: Future<Item = StoreItem, Error = Self::Error> + 'static + Send;
+    type StoreFuture: Future<Item = (StoreItem, Self), Error = (Self::Error, Self)> + 'static + Send;
 
     /// The `Future` that is returned when reading the collection data.
-    type ReadCollectionFuture: Future<Item = CollectionPointer, Error = Self::Error>
+    type ReadCollectionFuture: Future<Item = (CollectionPointer, Self), Error = (Self::Error, Self)>
         + 'static
         + Send;
 
     /// The `Future` that is returned when writing into a collection.
-    type WriteCollectionFuture: Future<Item = (), Error = Self::Error> + 'static + Send;
+    type WriteCollectionFuture: Future<Item = Self, Error = (Self::Error, Self)> + 'static + Send;
 
     /// The `Future` that is returned when querying the database.
-    type QueryFuture: Future<Item = Vec<Vec<String>>, Error = Self::Error> + 'static + Send;
+    type QueryFuture: Future<Item = (Vec<Vec<String>>, Self), Error = (Self::Error, Self)> + 'static + Send;
 
     /// Gets a single `StoreItem` from the store. Missing entities are no error,
     /// but instead returns a `None`.
-    fn get(&self, path: String, local: bool) -> Self::GetFuture;
+    fn get(self, path: String, local: bool) -> Self::GetFuture;
 
     /// Stores a single `StoreItem` into the store.
     ///
     /// To delete an Entity, set its type to as:Tombstone. This may
     /// instantly remove it, or queue it for possible future deletion.
-    fn put(&mut self, path: String, item: StoreItem) -> Self::StoreFuture;
+    fn put(self, path: String, item: StoreItem) -> Self::StoreFuture;
 
     /// Queries the entire store for a specific set of parameters.
     /// The return value is a list for every result in the database that matches the query.
     /// The array elements are in numeric order of the placeholders.
-    fn query(&self, query: Vec<QuadQuery>) -> Self::QueryFuture;
+    fn query(self, query: Vec<QuadQuery>) -> Self::QueryFuture;
 
     /// Reads N amount of items from the collection corresponding to a specific ID. If a cursor is passed,
     /// it can be used to paginate.
     fn read_collection(
-        &self,
+        self,
         path: String,
         count: Option<u32>,
         cursor: Option<String>,
     ) -> Self::ReadCollectionFuture;
 
     /// Finds an item in a collection. The result will contain cursors to just before and after the item, if it exists.
-    fn find_collection(&self, path: String, item: String) -> Self::ReadCollectionFuture;
+    fn find_collection(self, path: String, item: String) -> Self::ReadCollectionFuture;
 
     /// Inserts an item into the back of the collection.
-    fn insert_collection(&mut self, path: String, item: String) -> Self::WriteCollectionFuture;
+    fn insert_collection(self, path: String, item: String) -> Self::WriteCollectionFuture;
 
     /// Removes an item from the collection.
-    fn remove_collection(&mut self, path: String, item: String) -> Self::WriteCollectionFuture;
+    fn remove_collection(self, path: String, item: String) -> Self::WriteCollectionFuture;
 }
 
 #[derive(Debug)]
@@ -74,32 +74,21 @@ pub struct CollectionPointer {
     pub count: Option<u32>,
 }
 
-/// A recursive entity store, that, if trying to get an unknown `Entity`, will
-/// instead ask the next `EntityStore`.
-pub trait RecursiveEntityStore<T>: EntityStore
-where
-    T: EntityStore,
-{
-    /// Get a mutable reference to the next EntityStore. This function is
-    /// needed in rare cases inside the `MessageHandler`, mostly for `Update`.
-    fn next(&mut self) -> &mut T;
-}
-
 pub trait QueueItem {
     fn event(&self) -> &str;
     fn data(&self) -> &str;
 }
 
-pub trait QueueStore: Debug + Send + 'static {
+pub trait QueueStore: Debug + Send + Sized + 'static {
     type Item: QueueItem + 'static;
     type Error: Error + Send + Sync + 'static;
-    type GetItemFuture: Future<Item = Option<Self::Item>, Error = Self::Error> + Send + 'static;
-    type MarkFuture: Future<Item = (), Error = Self::Error> + Send + 'static;
+    type GetItemFuture: Future<Item = (Option<Self::Item>, Self), Error = (Self::Error, Self)> + Send + 'static;
+    type MarkFuture: Future<Item = Self, Error = (Self::Error, Self)> + Send + 'static;
 
-    fn get_item(&self) -> Self::GetItemFuture;
+    fn get_item(self) -> Self::GetItemFuture;
 
-    fn mark_success(&self, item: Self::Item) -> Self::MarkFuture;
-    fn mark_failure(&self, item: Self::Item) -> Self::MarkFuture;
+    fn mark_success(self, item: Self::Item) -> Self::MarkFuture;
+    fn mark_failure(self, item: Self::Item) -> Self::MarkFuture;
 
-    fn add(&self, event: String, data: String) -> Self::MarkFuture;
+    fn add(self, event: String, data: String) -> Self::MarkFuture;
 }

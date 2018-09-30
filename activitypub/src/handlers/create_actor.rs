@@ -2,7 +2,7 @@ use jsonld::nodemap::{Entity, Pointer, Value};
 
 use serde_json::Value as JValue;
 
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
+use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem, box_store_error};
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -47,26 +47,27 @@ impl Error for CreateActorError {
 
 pub struct CreateActorHandler;
 
-fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
+fn _ensure<T: EntityStore + 'static>(store: T, entity: &Entity, name: &str) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() == 1 {
-        Ok(entity[name][0].to_owned())
+        Ok((entity[name][0].to_owned(), store))
     } else {
-        Err(Box::new(CreateActorError::MissingRequired(name.to_owned())))
+        Err((Box::new(CreateActorError::MissingRequired(name.to_owned())), store))
     }
 }
 
-fn _set(
+fn _set<T: EntityStore + 'static>(
+    store: T,
     entity: &mut Entity,
     name: &str,
     val: Pointer,
-) -> Result<(), Box<Error + Send + Sync + 'static>> {
+) -> Result<T, (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() != 0 {
-        Err(Box::new(CreateActorError::ExistingPredicate(
+        Err((Box::new(CreateActorError::ExistingPredicate(
             name.to_owned(),
-        )))
+        )), store))
     } else {
         entity.get_mut(name).push(val);
-        Ok(())
+        Ok(store)
     }
 }
 
@@ -128,28 +129,28 @@ fn assign_and_store<T: EntityStore + 'static>(
     mut store: T,
     parent: String,
     object: String,
-) -> Result<(Context, T, String), T::Error> {
+) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
     let (context, mut store, collection) = await!(assign_id(
         context,
         store,
         Some(object),
         Some(parent.to_owned()),
         1
-    ))?;
+    )).map_err(box_store_error)?;
 
-    let collection = await!(
+    let (collection, store) = await!(
         store.put(
             collection.to_owned(),
             StoreItem::parse(
                 &collection,
                 json!({
-                "@id": &collection,
-                "@type": [as2!(OrderedCollection)],
-                as2!(partOf): [{"@id": &parent}]
-            })
+                    "@id": &collection,
+                    "@type": [as2!(OrderedCollection)],
+                    as2!(partOf): [{"@id": &parent}]
+                })
             ).unwrap()
         )
-    )?;
+    ).map_err(box_store_error)?;
 
     Ok((context, store, collection.id().to_owned()))
 }
@@ -162,28 +163,30 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
         store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
+    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem, false))
-            .map_err(Box::new)?
-            .expect("Missing the entity being handled, shouldn't happen");
+        let (elem, mut store) = await!(store.get(elem, false))
+            .map_err(box_store_error)?;
+        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         let mut elem = if elem.main()[as2!(preferredUsername)].len() > 0
             || elem.main().types.contains(&as2!(Person).to_owned())
         {
             elem
-        } else if !elem.main().types.contains(&as2!(Create).to_owned()) {
-            let elem = _ensure(elem.main(), as2!(object))?;
+        } else if elem.main().types.contains(&as2!(Create).to_owned()) {
+            let (elem, storeval) = _ensure(store, elem.main(), as2!(object))?;
             let elem = if let Pointer::Id(id) = elem {
                 id
             } else {
-                return Err(Box::new(CreateActorError::MissingRequired(
+                return Err((Box::new(CreateActorError::MissingRequired(
                     as2!(object).to_owned(),
-                )));
+                )), storeval));
             };
 
-            await!(store.get(elem, false)).map_err(Box::new)?.unwrap()
+            let (item, storeval) = await!(storeval.get(elem, false)).map_err(box_store_error)?;
+            store = storeval;
+            item.unwrap()
         } else {
             return Ok((context, store, root));
         };
@@ -192,8 +195,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             return Ok((context, store, root));
         }
 
-        _ensure(elem.main(), as2!(preferredUsername))?;
-        _ensure(elem.main(), as2!(name))?;
+        let (_, store) = _ensure(store, elem.main(), as2!(preferredUsername))?;
+        let (_, store) = _ensure(store, elem.main(), as2!(name))?;
 
         let (context, mut store, inbox) = await!(assign_id(
             context,
@@ -201,12 +204,20 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Some("inbox".to_owned()),
             Some(elem.id().to_owned()),
             1
-        )).map_err(Box::new)?;
+        )).map_err(box_store_error)?;
 
-        let inbox = await!(store.put(
+        let (inbox, store) = await!(store.put(
             inbox.to_owned(),
             create_collection(&inbox, elem.id(), ldp!(inbox))
-        )).map_err(Box::new)?;
+        )).map_err(box_store_error)?;
+
+        let store = _set(
+            store,
+            elem.main_mut(),
+            ldp!(inbox),
+            Pointer::Id(inbox.id().to_owned()),
+        )?;
+
 
         let (context, mut store, outbox) = await!(assign_id(
             context,
@@ -214,50 +225,53 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Some("outbox".to_owned()),
             Some(elem.id().to_owned()),
             1
-        )).map_err(Box::new)?;
-        let outbox = await!(store.put(
+        )).map_err(box_store_error)?;
+
+        let (outbox, store) = await!(store.put(
             outbox.to_owned(),
             create_collection(&outbox, elem.id(), as2!(outbox))
-        )).map_err(Box::new)?;
+        )).map_err(box_store_error)?;
 
-        _set(
-            elem.main_mut(),
-            ldp!(inbox),
-            Pointer::Id(inbox.id().to_owned()),
-        )?;
-        _set(
+        let store = _set(
+            store,
             elem.main_mut(),
             as2!(outbox),
             Pointer::Id(outbox.id().to_owned()),
         )?;
+
 
         let (context, mut store, following) = await!(assign_and_store(
             context,
             store,
             elem.id().to_owned(),
             String::from("following")
-        )).map_err(Box::new)?;
+        ))?;
+
+        let store = _set(store, elem.main_mut(), as2!(following), Pointer::Id(following))?;
+
         let (context, mut store, followers) = await!(assign_and_store(
             context,
             store,
             elem.id().to_owned(),
             String::from("followers")
-        )).map_err(Box::new)?;
+        ))?;
 
-        _set(elem.main_mut(), as2!(following), Pointer::Id(following))?;
+        let store = _set(store, elem.main_mut(), as2!(followers), Pointer::Id(followers))?;
 
-        _set(elem.main_mut(), as2!(followers), Pointer::Id(followers))?;
+        let keyobj = match create_key_obj(elem.id()) {
+            Ok((_, keyobj)) => keyobj,
+            Err(e) => return Err((e, store)),
+        };
 
-        let (_, keyobj) = create_key_obj(elem.id())?;
-
-        _set(
+        let store = _set(
+            store,
             elem.main_mut(),
             sec!(publicKey),
             Pointer::Id(keyobj.id().to_owned()),
         )?;
 
-        await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(Box::new)?;
-        await!(store.put(elem.id().to_owned(), elem)).map_err(Box::new)?;
+        let (_, store) = await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(box_store_error)?;
+        let (_, store) = await!(store.put(elem.id().to_owned(), elem)).map_err(box_store_error)?;
         Ok((context, store, root))
     }
 }

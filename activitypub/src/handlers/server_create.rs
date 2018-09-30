@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{Context, EntityStore, MessageHandler};
+use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
 
 use std::error::Error;
 use std::fmt;
@@ -38,15 +38,6 @@ impl Error for ServerCreateError {
 
 pub struct ServerCreateHandler;
 
-fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
-    if entity[name].len() == 1 {
-        Ok(entity[name][0].to_owned())
-    } else {
-        Err(Box::new(ServerCreateError::MissingRequired(
-            name.to_owned(),
-        )))
-    }
-}
 impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
     #[async(boxed_send)]
     fn handle(
@@ -55,40 +46,47 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
+    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let root = elem.to_owned();
 
-        let mut elem = match await!(store.get(elem, false)).map_err(Box::new)? {
-            Some(val) => val,
-            None => return Err(Box::new(ServerCreateError::FailedToRetrieve)),
+        let (elem, store) = match await!(store.get(elem, false)).map_err(box_store_error)? {
+            (Some(val), store) => (val, store),
+            (None, store) => return Err((Box::new(ServerCreateError::FailedToRetrieve), store)),
         };
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
             return Ok((context, store, root));
         }
 
-        let elem = _ensure(elem.main(), as2!(object))?;
+        let elem = if elem.main()[as2!(object)].len() == 1 {
+            elem.main()[as2!(object)][0].to_owned()
+        } else {
+            return Err((Box::new(ServerCreateError::MissingRequired(as2!(object).to_owned())), store))
+        };
+
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(Box::new(ServerCreateError::MissingRequired(
+            return Err((Box::new(ServerCreateError::MissingRequired(
                 as2!(object).to_owned(),
-            )));
+            )), store));
         };
 
-        let mut elem = await!(store.get(elem, false)).map_err(Box::new)?.unwrap();
+        let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;
+        let elem = elem.unwrap();
 
         for pointer in elem.main()[as2!(inReplyTo)].clone().into_iter() {
             if let Pointer::Id(id) = pointer {
-                let item = await!(store.get(id, true)).map_err(Box::new)?;
+                let (item, _store) = await!(store.get(id, true)).map_err(box_store_error)?;
+                store = _store;
 
                 if let Some(item) = item {
                     if item.is_owned(&context) {
                         if let Some(Pointer::Id(replies)) =
                             item.main()[as2!(replies)].iter().next().cloned()
                         {
-                            await!(store.insert_collection(replies, elem.id().to_owned()))
-                                .map_err(Box::new)?;
+                            store = await!(store.insert_collection(replies, elem.id().to_owned()))
+                                .map_err(box_store_error)?;
                         }
                     }
                 }

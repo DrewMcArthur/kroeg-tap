@@ -16,12 +16,13 @@ use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapEr
 fn _get_collectionified<T: EntityStore>(
     store: T,
     id: String,
-) -> Result<(Option<StoreItem>, T), T::Error> {
+) -> Result<(Option<StoreItem>, T), (T::Error, T)> {
     let without_query = id.split('&').next().unwrap().to_string();
     if without_query == id {
-        Ok((await!(store.get(id.to_owned(), true))?, store))
+        await!(store.get(id.to_owned(), true))
     } else {
-        if let Some(val) = await!(store.get(without_query.to_owned(), true))? {
+        let (val, store) = await!(store.get(without_query.to_owned(), true))?;
+        if let Some(val) = val {
             if !val
                 .main()
                 .types
@@ -30,18 +31,18 @@ fn _get_collectionified<T: EntityStore>(
                 return Ok((None, store));
             }
 
-            let data = await!(store.read_collection(without_query.to_owned(), None, None))?;
+            let (data, store) = await!(store.read_collection(without_query.to_owned(), None, None))?;
 
             Ok((
                 Some(
                     StoreItem::parse(
                         &id,
                         json!({
-                "@id": id,
-                "@type": [as2!(OrderedCollectionPage)],
-                as2!(partOf): [{"@id": without_query}],
-                "orderedItems": [{"@list": data.items}]
-            }),
+                            "@id": id,
+                            "@type": [as2!(OrderedCollectionPage)],
+                            as2!(partOf): [{"@id": without_query}],
+                            "orderedItems": [{"@list": data.items}]
+                        }),
                     ).expect("static input cannot fail"),
                 ),
                 store,
@@ -84,7 +85,7 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
         HashSet<String>,
         JValue,
     ),
-    T::Error,
+    (T::Error, T),
 > {
     match value {
         Pointer::Id(id) => {
@@ -182,7 +183,7 @@ fn _assemble<T: EntityStore, R: Authorizer<T>>(
         HashSet<String>,
         JValue,
     ),
-    T::Error,
+    (T::Error, T),
 > {
     let mut map = JMap::new();
     if !item.id.starts_with("_:") {
@@ -235,23 +236,13 @@ fn _assemble<T: EntityStore, R: Authorizer<T>>(
 
 #[async(boxed_send)]
 /// Assembles a `StoreItem`, ensuring that no cycles happen.
-///
-/// If this code were to infinitely recurse when assembling a `StoreItem`,
-/// this would easily allow a remote server to DoS this server.
-///
-/// Also, due to limitations in `Future`s, this function takes ownership of
-/// the `EntityStore` passed into it, and returns it in a tuple when the
-/// future is fullfilled.
-///
-/// Currently, if the future fails, the `EntityStore` is completely consumed.
-/// This may change in the future.
 pub fn assemble<T: EntityStore, R: Authorizer<T>>(
     mut item: StoreItem,
     depth: u32,
     store: Option<T>,
     authorizer: R,
     seen: HashSet<String>,
-) -> Result<(HashSet<String>, Option<T>, R, JValue), T::Error> {
+) -> Result<(HashSet<String>, Option<T>, R, JValue), (T::Error, T)> {
     let main = item.data.remove(&item.id).unwrap();
 
     let (nstore, authorizer, _, nseen, val) =

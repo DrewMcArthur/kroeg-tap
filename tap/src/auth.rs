@@ -7,13 +7,13 @@ use futures::future;
 use futures::prelude::{await, *};
 
 pub trait Authorizer<T: EntityStore>: Send + Sync + 'static {
-    type Future: Future<Item = (T, bool), Error = T::Error> + 'static + Send;
+    type Future: Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send;
 
     fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future;
 }
 
 impl<T: EntityStore> Authorizer<T> for () {
-    type Future = future::FutureResult<(T, bool), T::Error>;
+    type Future = future::FutureResult<(T, bool), (T::Error, T)>;
 
     fn can_show(&self, store: T, _: &StoreItem) -> Self::Future {
         future::ok((store, true))
@@ -33,14 +33,16 @@ fn recursive_verify<T: EntityStore>(
     subject: String,
     store: T,
     ids: Vec<String>,
-) -> Result<(T, bool), T::Error> {
+) -> Result<(T, bool), (T::Error, T)> {
     if ids.contains(&as2!(Public).to_string()) {
         Ok((store, true))
     } else if ids.contains(&subject) {
         Ok((store, true))
     } else {
+        let mut store = store;
         for id in ids.into_iter() {
-            let data = await!(store.find_collection(id, subject.to_owned()))?;
+            let (data, storeval) = await!(store.find_collection(id, subject.to_owned()))?;
+            store = storeval;
             if data.items.len() != 0 {
                 return Ok((store, true));
             }
@@ -51,7 +53,7 @@ fn recursive_verify<T: EntityStore>(
 }
 
 impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
-    type Future = Box<Future<Item = (T, bool), Error = T::Error> + 'static + Send>;
+    type Future = Box<Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send>;
 
     fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future {
         let mut audience = Vec::new();

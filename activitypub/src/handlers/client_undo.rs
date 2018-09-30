@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{Context, EntityStore, MessageHandler};
+use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
 
 use std::error::Error;
 use std::fmt;
@@ -33,14 +33,6 @@ impl Error for ClientUndoError {
     }
 }
 
-fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
-    if entity[name].len() == 1 {
-        Ok(entity[name][0].to_owned())
-    } else {
-        Err(Box::new(ClientUndoError::MissingRequired(name.to_owned())))
-    }
-}
-
 fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
     if a.len() != b.len() {
         return false;
@@ -62,46 +54,50 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
     fn handle(
         &self,
         context: Context,
-        mut store: T,
+        store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
+    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let mut relem = await!(store.get(elem, false))
-            .map_err(Box::new)?
-            .expect("Missing the entity being handled, shouldn't happen");
+        let (relem, store) = await!(store.get(elem, false))
+            .map_err(box_store_error)?;
+        let relem = relem.expect("Missing the entity being handled, shouldn't happen");
 
         if !relem.main().types.contains(&as2!(Undo).to_owned()) {
             return Ok((context, store, root));
         }
 
-        let elem = _ensure(relem.main(), as2!(object))?;
+        let elem = if relem.main()[as2!(object)].len() == 1 {
+            relem.main()[as2!(object)][0].to_owned()
+        } else {
+            return Err((Box::new(ClientUndoError::MissingRequired(as2!(object).to_owned())), store))
+        };
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(Box::new(ClientUndoError::MissingRequired(
+            return Err((Box::new(ClientUndoError::MissingRequired(
                 as2!(object).to_owned(),
-            )));
+            )), store));
         };
 
-        let mut elem = await!(store.get(elem.to_owned(), false))
-            .map_err(Box::new)?
-            .unwrap();
+        let (elem, store) = await!(store.get(elem.to_owned(), false))
+            .map_err(box_store_error)?;
+        let elem = elem.unwrap();
 
         if !equals_any_order(&relem.main()[as2!(actor)], &elem.main()[as2!(actor)]) {
-            return Err(Box::new(ClientUndoError::DifferingActor));
+            return Err((Box::new(ClientUndoError::DifferingActor), store));
         }
 
-        let mut subj = await!(store.get(subject, false))
-            .map_err(Box::new)?
-            .unwrap();
+        let (subj, mut store) = await!(store.get(subject, false))
+            .map_err(box_store_error)?;
+        let subj = subj.unwrap();
 
         if elem.main().types.contains(&as2!(Like).to_owned()) {
             if let Some(Pointer::Id(liked)) = subj.main()[as2!(liked)].iter().next().cloned() {
-                await!(store.remove_collection(liked.to_owned(), elem.id().to_owned()))
-                    .map_err(Box::new)?
+                store = await!(store.remove_collection(liked.to_owned(), elem.id().to_owned()))
+                    .map_err(box_store_error)?;
             }
         }
 
@@ -109,8 +105,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
             if let Some(Pointer::Id(following)) =
                 subj.main()[as2!(following)].iter().next().cloned()
             {
-                await!(store.remove_collection(following.to_owned(), elem.id().to_owned()))
-                    .map_err(Box::new)?
+                store = await!(store.remove_collection(following.to_owned(), elem.id().to_owned()))
+                    .map_err(box_store_error)?;
             }
         }
 

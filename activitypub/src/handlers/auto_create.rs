@@ -1,5 +1,5 @@
 use jsonld::nodemap::Pointer;
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem};
+use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem, box_store_error};
 
 use std::error::Error;
 use std::fmt;
@@ -90,25 +90,23 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
         mut entitystore: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
-        let mut elem = await!(entitystore.get(elem, false))
-            .map_err(Box::new)?
-            .expect("Missing the entity being handled, shouldn't happen");
+    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
+        let (elem, entitystore) = await!(entitystore.get(elem, false))
+            .map_err(box_store_error)?;
+
+        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         match object_type(&elem) {
             ObjectType::Activity => Ok((context, entitystore, elem.id().to_owned())),
-            ObjectType::ImproperActivity => Err(Box::new(AutomaticCreateError::ImproperActivity)),
+            ObjectType::ImproperActivity => Err((Box::new(AutomaticCreateError::ImproperActivity), entitystore)),
             ObjectType::Object => {
-                let (_context, _store, id) = await!(assign_id(
+                let (context, entitystore, id) = await!(assign_id(
                     context,
                     entitystore,
                     Some("activity".to_string()),
                     Some(elem.id().to_owned()),
                     1
-                )).map_err(Box::new)?;
-
-                context = _context;
-                entitystore = _store;
+                )).map_err(box_store_error)?;
 
                 let mut entity = StoreItem::parse(
                     &id,
@@ -144,7 +142,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     .get_mut(as2!(audience))
                     .append(&mut elem.main_mut()[as2!(audience)].clone());
 
-                await!(entitystore.put(id.to_owned(), entity)).map_err(Box::new)?;
+                let (_, entitystore) = await!(entitystore.put(id.to_owned(), entity)).map_err(box_store_error)?;
 
                 Ok((context, entitystore, id))
             }

@@ -121,7 +121,7 @@ pub fn assign_ids<T: EntityStore>(
     mut store: T,
     parent: Option<String>,
     data: HashMap<String, StoreItem>,
-) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), T::Error> {
+) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), (T::Error, T)> {
     let mut out = HashMap::new();
     let mut remap = HashMap::new();
     let roots: Vec<_> = data.keys().map(|f| f.to_owned()).collect();
@@ -193,7 +193,7 @@ pub fn assign_id<T: EntityStore>(
     suggestion: Option<String>,
     parent: Option<String>,
     depth: u32,
-) -> Result<(Context, T, String), T::Error> {
+) -> Result<(Context, T, String), (T::Error, T)> {
     let parent = parent.unwrap_or(context.server_base.to_owned());
     let suggestion = suggestion.unwrap_or(get_suggestion(depth));
 
@@ -203,7 +203,7 @@ pub fn assign_id<T: EntityStore>(
         if parent.ends_with("/") { "" } else { "/" },
         suggestion
     );
-    let test = await!(store.get(preliminary.to_owned(), false))?;
+    let (test, mut store) = await!(store.get(preliminary.to_owned(), false))?;
     if test.is_none() {
         return Ok((context, store, preliminary));
     }
@@ -216,7 +216,9 @@ pub fn assign_id<T: EntityStore>(
             if parent.ends_with("/") { "" } else { "/" },
             suggestion
         );
-        let test = await!(store.get(preliminary.to_owned(), false))?;
+        let (test, storeval) = await!(store.get(preliminary.to_owned(), false))?;
+        store = storeval;
+
         if test.is_none() {
             return Ok((context, store, preliminary));
         }

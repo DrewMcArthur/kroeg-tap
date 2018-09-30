@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{Context, EntityStore, MessageHandler};
+use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
 
 use std::error::Error;
 use std::fmt;
@@ -30,11 +30,11 @@ impl Error for ClientLikeError {
     }
 }
 
-fn _ensure(entity: &Entity, name: &str) -> Result<Pointer, Box<Error + Send + Sync + 'static>> {
+fn _ensure<T: EntityStore + 'static>(store: T, entity: &Entity, name: &str) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() == 1 {
-        Ok(entity[name][0].to_owned())
+        Ok((entity[name][0].to_owned(), store))
     } else {
-        Err(Box::new(ClientLikeError::MissingRequired(name.to_owned())))
+        Err((Box::new(ClientLikeError::MissingRequired(name.to_owned())), store))
     }
 }
 
@@ -48,39 +48,39 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
         mut store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), Box<Error + Send + Sync + 'static>> {
+    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let mut elem = await!(store.get(elem, false))
-            .map_err(Box::new)?
-            .expect("Missing the entity being handled, shouldn't happen");
+        let (elem, store) = await!(store.get(elem, false))
+            .map_err(box_store_error)?;
+        
+        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Like).to_owned()) {
             return Ok((context, store, root));
         }
 
-        let elem = _ensure(elem.main(), as2!(object))?;
+        let (elem, store) = _ensure(store, elem.main(), as2!(object))?;
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err(Box::new(ClientLikeError::MissingRequired(
+            return Err((Box::new(ClientLikeError::MissingRequired(
                 as2!(object).to_owned(),
-            )));
+            )), store));
         };
 
-        let mut elem = await!(store.get(elem.to_owned(), false))
-            .map_err(Box::new)?
-            .unwrap();
+        let (subj, store) = await!(store.get(subject, false))
+            .map_err(box_store_error)?;
+        
+        let subj = subj.unwrap();
 
-        let mut subj = await!(store.get(subject, false))
-            .map_err(Box::new)?
-            .unwrap();
-
-        if let Some(Pointer::Id(liked)) = subj.main()[as2!(liked)].iter().next().cloned() {
-            await!(store.insert_collection(liked.to_owned(), elem.id().to_owned()))
-                .map_err(Box::new)?
-        }
+        let store = if let Some(Pointer::Id(liked)) = subj.main()[as2!(liked)].iter().next().cloned() {
+            await!(store.insert_collection(liked.to_owned(), elem.to_owned()))
+                .map_err(box_store_error)?
+        } else {
+            store
+        };
 
         Ok((context, store, root))
     }
