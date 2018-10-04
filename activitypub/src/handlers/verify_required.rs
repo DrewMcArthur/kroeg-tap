@@ -1,5 +1,5 @@
 use jsonld::nodemap::Pointer;
-use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
+use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 
 use std::error::Error;
 use std::fmt;
@@ -78,7 +78,9 @@ impl VerifyRequiredEventsHandler {
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let subject = context.user.subject.to_owned();
 
-        let (mut elem, entitystore) = match await!(entitystore.get(elem, false)).map_err(box_store_error)? {
+        let (mut elem, entitystore) = match await!(entitystore.get(elem, false))
+            .map_err(box_store_error)?
+        {
             (Some(val), store) => (val, store),
             (None, store) => return Err((Box::new(RequiredEventsError::FailedToRetrieve), store)),
         };
@@ -116,7 +118,8 @@ impl VerifyRequiredEventsHandler {
 
         match object.remove(0) {
             Pointer::Id(id) => {
-                let (entity, entitystore) = await!(entitystore.get(id, false)).map_err(box_store_error)?;
+                let (entity, entitystore) =
+                    await!(entitystore.get(id, false)).map_err(box_store_error)?;
                 if let Some(entity) = entity {
                     if is_local
                         && !equals_any_order(
@@ -125,7 +128,10 @@ impl VerifyRequiredEventsHandler {
                         )
                         && !elem.main().types.contains(&String::from(as2!(Update)))
                     {
-                        Err((Box::new(RequiredEventsError::ActorAttributedToDoNotMatch), entitystore))
+                        Err((
+                            Box::new(RequiredEventsError::ActorAttributedToDoNotMatch),
+                            entitystore,
+                        ))
                     } else {
                         Ok((context, entitystore, elem.id().to_owned()))
                     }
@@ -146,8 +152,9 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
         entitystore: T,
         inbox: String,
         elem: String,
-    ) -> Box<Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send>
-    {
+    ) -> Box<
+        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
+    > {
         VerifyRequiredEventsHandler::_handle::<T>(self.0, context, entitystore, inbox, elem)
     }
 }

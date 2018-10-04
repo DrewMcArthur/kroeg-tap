@@ -2,7 +2,7 @@ use jsonld::nodemap::{Entity, Pointer, Value};
 
 use serde_json::Value as JValue;
 
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem, box_store_error};
+use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -47,11 +47,18 @@ impl Error for CreateActorError {
 
 pub struct CreateActorHandler;
 
-fn _ensure<T: EntityStore + 'static>(store: T, entity: &Entity, name: &str) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
+fn _ensure<T: EntityStore + 'static>(
+    store: T,
+    entity: &Entity,
+    name: &str,
+) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() == 1 {
         Ok((entity[name][0].to_owned(), store))
     } else {
-        Err((Box::new(CreateActorError::MissingRequired(name.to_owned())), store))
+        Err((
+            Box::new(CreateActorError::MissingRequired(name.to_owned())),
+            store,
+        ))
     }
 }
 
@@ -62,9 +69,10 @@ fn _set<T: EntityStore + 'static>(
     val: Pointer,
 ) -> Result<T, (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() != 0 {
-        Err((Box::new(CreateActorError::ExistingPredicate(
-            name.to_owned(),
-        )), store))
+        Err((
+            Box::new(CreateActorError::ExistingPredicate(name.to_owned())),
+            store,
+        ))
     } else {
         entity.get_mut(name).push(val);
         Ok(store)
@@ -80,11 +88,13 @@ fn create_key_obj(
     let private_pem = String::from_utf8(
         key.private_key_to_pem()
             .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
-    ).unwrap();
+    )
+    .unwrap();
     let public_pem = String::from_utf8(
         key.public_key_to_pem()
             .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut keyobj = Entity::new(id.to_owned());
     keyobj.types.push(sec!(Key).to_owned());
@@ -116,7 +126,8 @@ fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
                 "@type": [as2!(OrderedCollection)],
                 as2!(partOf): [{"@id": owned}]
             }),
-    ).unwrap();
+    )
+    .unwrap();
 
     item.meta()[kroeg!(box)].push(Pointer::Id(boxtype.to_owned()));
 
@@ -136,7 +147,8 @@ fn assign_and_store<T: EntityStore + 'static>(
         Some(object),
         Some(parent.to_owned()),
         1
-    )).map_err(box_store_error)?;
+    ))
+    .map_err(box_store_error)?;
 
     let (collection, store) = await!(
         store.put(
@@ -148,9 +160,11 @@ fn assign_and_store<T: EntityStore + 'static>(
                     "@type": [as2!(OrderedCollection)],
                     as2!(partOf): [{"@id": &parent}]
                 })
-            ).unwrap()
+            )
+            .unwrap()
         )
-    ).map_err(box_store_error)?;
+    )
+    .map_err(box_store_error)?;
 
     Ok((context, store, collection.id().to_owned()))
 }
@@ -166,8 +180,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let root = elem.to_owned();
 
-        let (elem, mut store) = await!(store.get(elem, false))
-            .map_err(box_store_error)?;
+        let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;
         let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         let mut elem = if elem.main()[as2!(preferredUsername)].len() > 0
@@ -179,9 +192,10 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             let elem = if let Pointer::Id(id) = elem {
                 id
             } else {
-                return Err((Box::new(CreateActorError::MissingRequired(
-                    as2!(object).to_owned(),
-                )), storeval));
+                return Err((
+                    Box::new(CreateActorError::MissingRequired(as2!(object).to_owned())),
+                    storeval,
+                ));
             };
 
             let (item, storeval) = await!(storeval.get(elem, false)).map_err(box_store_error)?;
@@ -204,12 +218,14 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Some("inbox".to_owned()),
             Some(elem.id().to_owned()),
             1
-        )).map_err(box_store_error)?;
+        ))
+        .map_err(box_store_error)?;
 
         let (inbox, store) = await!(store.put(
             inbox.to_owned(),
             create_collection(&inbox, elem.id(), ldp!(inbox))
-        )).map_err(box_store_error)?;
+        ))
+        .map_err(box_store_error)?;
 
         let store = _set(
             store,
@@ -218,19 +234,20 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(inbox.id().to_owned()),
         )?;
 
-
         let (context, mut store, outbox) = await!(assign_id(
             context,
             store,
             Some("outbox".to_owned()),
             Some(elem.id().to_owned()),
             1
-        )).map_err(box_store_error)?;
+        ))
+        .map_err(box_store_error)?;
 
         let (outbox, store) = await!(store.put(
             outbox.to_owned(),
             create_collection(&outbox, elem.id(), as2!(outbox))
-        )).map_err(box_store_error)?;
+        ))
+        .map_err(box_store_error)?;
 
         let store = _set(
             store,
@@ -239,7 +256,6 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(outbox.id().to_owned()),
         )?;
 
-
         let (context, mut store, following) = await!(assign_and_store(
             context,
             store,
@@ -247,7 +263,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             String::from("following")
         ))?;
 
-        let store = _set(store, elem.main_mut(), as2!(following), Pointer::Id(following))?;
+        let store = _set(
+            store,
+            elem.main_mut(),
+            as2!(following),
+            Pointer::Id(following),
+        )?;
 
         let (context, mut store, followers) = await!(assign_and_store(
             context,
@@ -256,7 +277,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             String::from("followers")
         ))?;
 
-        let store = _set(store, elem.main_mut(), as2!(followers), Pointer::Id(followers))?;
+        let store = _set(
+            store,
+            elem.main_mut(),
+            as2!(followers),
+            Pointer::Id(followers),
+        )?;
 
         let keyobj = match create_key_obj(elem.id()) {
             Ok((_, keyobj)) => keyobj,
@@ -270,7 +296,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
             Pointer::Id(keyobj.id().to_owned()),
         )?;
 
-        let (_, store) = await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(box_store_error)?;
+        let (_, store) =
+            await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(box_store_error)?;
         let (_, store) = await!(store.put(elem.id().to_owned(), elem)).map_err(box_store_error)?;
         Ok((context, store, root))
     }

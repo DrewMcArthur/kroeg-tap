@@ -1,5 +1,5 @@
 use jsonld::nodemap::Pointer;
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem, box_store_error};
+use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
 
 use std::error::Error;
 use std::fmt;
@@ -91,14 +91,16 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
-        let (elem, entitystore) = await!(entitystore.get(elem, false))
-            .map_err(box_store_error)?;
+        let (elem, entitystore) = await!(entitystore.get(elem, false)).map_err(box_store_error)?;
 
         let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         match object_type(&elem) {
             ObjectType::Activity => Ok((context, entitystore, elem.id().to_owned())),
-            ObjectType::ImproperActivity => Err((Box::new(AutomaticCreateError::ImproperActivity), entitystore)),
+            ObjectType::ImproperActivity => Err((
+                Box::new(AutomaticCreateError::ImproperActivity),
+                entitystore,
+            )),
             ObjectType::Object => {
                 let (context, entitystore, id) = await!(assign_id(
                     context,
@@ -106,7 +108,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     Some("activity".to_string()),
                     Some(elem.id().to_owned()),
                     1
-                )).map_err(box_store_error)?;
+                ))
+                .map_err(box_store_error)?;
 
                 let mut entity = StoreItem::parse(
                     &id,
@@ -115,7 +118,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     "@type": [as2!(Create)],
                     as2!(object): [{"@id": elem.id()}]
                 }),
-                ).expect("cannot fail, static input");
+                )
+                .expect("cannot fail, static input");
 
                 entity
                     .main_mut()
@@ -142,7 +146,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                     .get_mut(as2!(audience))
                     .append(&mut elem.main_mut()[as2!(audience)].clone());
 
-                let (_, entitystore) = await!(entitystore.put(id.to_owned(), entity)).map_err(box_store_error)?;
+                let (_, entitystore) =
+                    await!(entitystore.put(id.to_owned(), entity)).map_err(box_store_error)?;
 
                 Ok((context, entitystore, id))
             }

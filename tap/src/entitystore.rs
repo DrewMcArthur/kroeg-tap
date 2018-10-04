@@ -16,7 +16,9 @@ pub trait EntityStore: Debug + Send + Sized + 'static {
     type Error: Error + Send + Sync + 'static;
 
     /// The `Future` that is returned when `get`ting a `StoreItem`.
-    type GetFuture: Future<Item = (Option<StoreItem>, Self), Error = (Self::Error, Self)> + 'static + Send;
+    type GetFuture: Future<Item = (Option<StoreItem>, Self), Error = (Self::Error, Self)>
+        + 'static
+        + Send;
 
     /// The `Future` that is returned when `put`ting a `StoreItem`.
     type StoreFuture: Future<Item = (StoreItem, Self), Error = (Self::Error, Self)> + 'static + Send;
@@ -30,7 +32,9 @@ pub trait EntityStore: Debug + Send + Sized + 'static {
     type WriteCollectionFuture: Future<Item = Self, Error = (Self::Error, Self)> + 'static + Send;
 
     /// The `Future` that is returned when querying the database.
-    type QueryFuture: Future<Item = (Vec<Vec<String>>, Self), Error = (Self::Error, Self)> + 'static + Send;
+    type QueryFuture: Future<Item = (Vec<Vec<String>>, Self), Error = (Self::Error, Self)>
+        + 'static
+        + Send;
 
     /// Gets a single `StoreItem` from the store. Missing entities are no error,
     /// but instead returns a `None`.
@@ -82,7 +86,9 @@ pub trait QueueItem {
 pub trait QueueStore: Debug + Send + Sized + 'static {
     type Item: QueueItem + 'static;
     type Error: Error + Send + Sync + 'static;
-    type GetItemFuture: Future<Item = (Option<Self::Item>, Self), Error = (Self::Error, Self)> + Send + 'static;
+    type GetItemFuture: Future<Item = (Option<Self::Item>, Self), Error = (Self::Error, Self)>
+        + Send
+        + 'static;
     type MarkFuture: Future<Item = Self, Error = (Self::Error, Self)> + Send + 'static;
 
     fn get_item(self) -> Self::GetItemFuture;

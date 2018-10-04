@@ -13,9 +13,13 @@ pub trait MessageHandler<T: EntityStore>: Send {
         entitystore: T,
         inbox: String,
         id: String,
-    ) -> Box<Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send>;
+    ) -> Box<
+        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
+    >;
 }
 
-pub fn box_store_error<T: EntityStore>((error, store): (T::Error, T)) -> (Box<Error + Send + Sync + 'static>, T) {
+pub fn box_store_error<T: EntityStore>(
+    (error, store): (T::Error, T),
+) -> (Box<Error + Send + Sync + 'static>, T) {
     (Box::new(error), store)
 }

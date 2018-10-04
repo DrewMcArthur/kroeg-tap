@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
+use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 
 use std::error::Error;
 use std::fmt;
@@ -61,15 +61,19 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
         let elem = if elem.main()[as2!(object)].len() == 1 {
             elem.main()[as2!(object)][0].to_owned()
         } else {
-            return Err((Box::new(ServerCreateError::MissingRequired(as2!(object).to_owned())), store))
+            return Err((
+                Box::new(ServerCreateError::MissingRequired(as2!(object).to_owned())),
+                store,
+            ));
         };
 
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err((Box::new(ServerCreateError::MissingRequired(
-                as2!(object).to_owned(),
-            )), store));
+            return Err((
+                Box::new(ServerCreateError::MissingRequired(as2!(object).to_owned())),
+                store,
+            ));
         };
 
         let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;

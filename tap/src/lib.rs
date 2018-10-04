@@ -1,4 +1,4 @@
-#![feature(generators, never_type, vec_remove_item, use_extern_macros)]
+#![feature(generators, never_type, vec_remove_item)]
 
 extern crate chrono;
 extern crate futures_await as futures;

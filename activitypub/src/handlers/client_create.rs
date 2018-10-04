@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{assign_id, Context, EntityStore, MessageHandler, StoreItem, box_store_error};
+use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
 
 use std::error::Error;
 use std::fmt;
@@ -36,13 +36,18 @@ impl Error for ClientCreateError {
 
 pub struct ClientCreateHandler;
 
-fn _ensure<T: EntityStore + 'static>(store: T, entity: &Entity, name: &str) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
+fn _ensure<T: EntityStore + 'static>(
+    store: T,
+    entity: &Entity,
+    name: &str,
+) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() == 1 {
         Ok((entity[name][0].to_owned(), store))
     } else {
-        Err((Box::new(ClientCreateError::MissingRequired(
-            name.to_owned(),
-        )), store))
+        Err((
+            Box::new(ClientCreateError::MissingRequired(name.to_owned())),
+            store,
+        ))
     }
 }
 
@@ -53,9 +58,10 @@ fn _set<T: EntityStore + 'static>(
     val: Pointer,
 ) -> Result<T, (Box<Error + Send + Sync + 'static>, T)> {
     if entity[name].len() != 0 {
-        Err((Box::new(ClientCreateError::ExistingPredicate(
-            name.to_owned(),
-        )), store))
+        Err((
+            Box::new(ClientCreateError::ExistingPredicate(name.to_owned())),
+            store,
+        ))
     } else {
         entity.get_mut(name).push(val);
         Ok(store)
@@ -73,9 +79,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
         let root = elem.to_owned();
 
-        let (elem, store) = await!(store.get(elem, false))
-            .map_err(box_store_error)?;
-        
+        let (elem, store) = await!(store.get(elem, false)).map_err(box_store_error)?;
+
         let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
@@ -86,9 +91,10 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err((Box::new(ClientCreateError::MissingRequired(
-                as2!(object).to_owned(),
-            )), store));
+            return Err((
+                Box::new(ClientCreateError::MissingRequired(as2!(object).to_owned())),
+                store,
+            ));
         };
 
         let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;
@@ -101,7 +107,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
                 Some(itemname.to_string()),
                 Some(elem.id().to_owned()),
                 1
-            )).map_err(box_store_error)?;
+            ))
+            .map_err(box_store_error)?;
 
             context = _context;
             store = _store;
@@ -113,7 +120,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
                 "@type": [as2!(OrderedCollection)],
                 as2!(partOf): [{"@id": elem.id()}]
             }),
-            ).unwrap();
+            )
+            .unwrap();
 
             let (_, _store) = await!(store.put(id.to_owned(), item)).map_err(box_store_error)?;
             store = _store;

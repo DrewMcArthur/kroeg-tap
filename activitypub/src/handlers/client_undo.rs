@@ -1,6 +1,6 @@
 use jsonld::nodemap::{Entity, Pointer};
 
-use kroeg_tap::{Context, EntityStore, MessageHandler, box_store_error};
+use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 
 use std::error::Error;
 use std::fmt;
@@ -61,8 +61,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let (relem, store) = await!(store.get(elem, false))
-            .map_err(box_store_error)?;
+        let (relem, store) = await!(store.get(elem, false)).map_err(box_store_error)?;
         let relem = relem.expect("Missing the entity being handled, shouldn't happen");
 
         if !relem.main().types.contains(&as2!(Undo).to_owned()) {
@@ -72,26 +71,28 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientUndoHandler {
         let elem = if relem.main()[as2!(object)].len() == 1 {
             relem.main()[as2!(object)][0].to_owned()
         } else {
-            return Err((Box::new(ClientUndoError::MissingRequired(as2!(object).to_owned())), store))
+            return Err((
+                Box::new(ClientUndoError::MissingRequired(as2!(object).to_owned())),
+                store,
+            ));
         };
         let elem = if let Pointer::Id(id) = elem {
             id
         } else {
-            return Err((Box::new(ClientUndoError::MissingRequired(
-                as2!(object).to_owned(),
-            )), store));
+            return Err((
+                Box::new(ClientUndoError::MissingRequired(as2!(object).to_owned())),
+                store,
+            ));
         };
 
-        let (elem, store) = await!(store.get(elem.to_owned(), false))
-            .map_err(box_store_error)?;
+        let (elem, store) = await!(store.get(elem.to_owned(), false)).map_err(box_store_error)?;
         let elem = elem.unwrap();
 
         if !equals_any_order(&relem.main()[as2!(actor)], &elem.main()[as2!(actor)]) {
             return Err((Box::new(ClientUndoError::DifferingActor), store));
         }
 
-        let (subj, mut store) = await!(store.get(subject, false))
-            .map_err(box_store_error)?;
+        let (subj, mut store) = await!(store.get(subject, false)).map_err(box_store_error)?;
         let subj = subj.unwrap();
 
         if elem.main().types.contains(&as2!(Like).to_owned()) {

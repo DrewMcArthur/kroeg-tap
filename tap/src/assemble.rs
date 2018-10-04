@@ -31,7 +31,8 @@ fn _get_collectionified<T: EntityStore>(
                 return Ok((None, store));
             }
 
-            let (data, store) = await!(store.read_collection(without_query.to_owned(), None, None))?;
+            let (data, store) =
+                await!(store.read_collection(without_query.to_owned(), None, None))?;
 
             Ok((
                 Some(
@@ -43,7 +44,8 @@ fn _get_collectionified<T: EntityStore>(
                             as2!(partOf): [{"@id": without_query}],
                             "orderedItems": [{"@list": data.items}]
                         }),
-                    ).expect("static input cannot fail"),
+                    )
+                    .expect("static input cannot fail"),
                 ),
                 store,
             ))

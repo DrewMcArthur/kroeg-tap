@@ -9,21 +9,20 @@ use jsonld::nodemap::{Entity, Pointer, Value};
 
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
 
 const ALPHABET: [char; 32] = [
-    'y', 'b', 'n', 'd', 'r', 'f', 'g', '8',
-    'e', 'j', 'k', 'm', 'c', 'p', 'q', 'x',
-    'o', 't', '1', 'u', 'w', 'i', 's', 'z',
-    'a', '3', '4', '5', 'h', '7', '6', '9',
+    'y', 'b', 'n', 'd', 'r', 'f', 'g', '8', 'e', 'j', 'k', 'm', 'c', 'p', 'q', 'x', 'o', 't', '1',
+    'u', 'w', 'i', 's', 'z', 'a', '3', '4', '5', 'h', '7', '6', '9',
 ];
 
 pub fn get_suggestion(depth: u32) -> String {
-    let mut result = String::new();
     let mut data: [u8; 8] = [0; 8];
 
     thread_rng().fill(&mut data);
-    let data: String = data.iter().map(|f| ALPHABET[(*f & 0b11111) as usize]).collect();
+    let data: String = data
+        .iter()
+        .map(|f| ALPHABET[(*f & 0b11111) as usize])
+        .collect();
 
     if depth == 0 {
         format!("{}-{}", &data[..4], &data[4..])
@@ -32,9 +31,7 @@ pub fn get_suggestion(depth: u32) -> String {
     }
 }
 
-const NAMES: [&'static str; 1] = [
-    as2!(preferredUsername),
-];
+const NAMES: [&'static str; 1] = [as2!(preferredUsername)];
 
 fn translate_name(predicate: &str, nam: &str) -> String {
     let mut result = String::new();
@@ -136,7 +133,8 @@ pub fn assign_ids<T: EntityStore>(
                 if newitem.iter().next().is_some() {
                     let mut suggestion = shortname_suggestion(&newitem);
                     let r = loop {
-                        let (c, s, r) = await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
+                        let (c, s, r) =
+                            await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
                         context = c;
                         store = s;
                         suggestion = None;
