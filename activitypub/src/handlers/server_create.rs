@@ -1,4 +1,4 @@
-use jsonld::nodemap::{Entity, Pointer};
+use jsonld::nodemap::Pointer;
 
 use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 
@@ -43,7 +43,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
     fn handle(
         &self,
         context: Context,
-        mut store: T,
+        store: T,
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {

@@ -52,7 +52,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
     fn handle(
         &self,
         context: Context,
-        mut store: T,
+        store: T,
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {

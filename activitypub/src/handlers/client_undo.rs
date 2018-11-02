@@ -1,4 +1,4 @@
-use jsonld::nodemap::{Entity, Pointer};
+use jsonld::nodemap::Pointer;
 
 use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 

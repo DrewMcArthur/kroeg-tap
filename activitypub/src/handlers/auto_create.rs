@@ -86,8 +86,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
     #[async(boxed_send)]
     fn handle(
         &self,
-        mut context: Context,
-        mut entitystore: T,
+        context: Context,
+        entitystore: T,
         _inbox: String,
         elem: String,
     ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {

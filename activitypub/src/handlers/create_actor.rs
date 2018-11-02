@@ -137,7 +137,7 @@ fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
 #[async]
 fn assign_and_store<T: EntityStore + 'static>(
     context: Context,
-    mut store: T,
+    store: T,
     parent: String,
     object: String,
 ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
@@ -150,20 +150,18 @@ fn assign_and_store<T: EntityStore + 'static>(
     ))
     .map_err(box_store_error)?;
 
-    let (collection, store) = await!(
-        store.put(
-            collection.to_owned(),
-            StoreItem::parse(
-                &collection,
-                json!({
+    let (collection, store) = await!(store.put(
+        collection.to_owned(),
+        StoreItem::parse(
+            &collection,
+            json!({
                     "@id": &collection,
                     "@type": [as2!(OrderedCollection)],
                     as2!(partOf): [{"@id": &parent}]
                 })
-            )
-            .unwrap()
         )
-    )
+        .unwrap()
+    ))
     .map_err(box_store_error)?;
 
     Ok((context, store, collection.id().to_owned()))
