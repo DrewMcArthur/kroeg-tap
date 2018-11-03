@@ -10,6 +10,9 @@ pub enum QueryId {
     /// A placeholder ID value. When queried, all the placeholders in a query with the same number have the same value.
     Placeholder(u32),
 
+    /// Matches any of these values.
+    Any(Vec<String>),
+
     /// Don't match on anything.
     Ignore,
 }

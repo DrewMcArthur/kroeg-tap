@@ -63,6 +63,9 @@ pub trait EntityStore: Debug + Send + Sized + 'static {
     /// Finds an item in a collection. The result will contain cursors to just before and after the item, if it exists.
     fn find_collection(self, path: String, item: String) -> Self::ReadCollectionFuture;
 
+    /// Finds all the collections containing a specific object.
+    fn read_collection_inverse(self, item: String) -> Self::ReadCollectionFuture;
+
     /// Inserts an item into the back of the collection.
     fn insert_collection(self, path: String, item: String) -> Self::WriteCollectionFuture;
 
