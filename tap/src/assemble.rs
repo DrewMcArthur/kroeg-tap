@@ -269,9 +269,11 @@ pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError
     // the tangle map stores a list of node -> node mappings
     let mut tangle_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    let mut flattened = generate_node_map(data, &mut DefaultNodeGenerator::new())?
-        .remove("@default")
-        .unwrap();
+    let mut flattened =
+        match generate_node_map(data, &mut DefaultNodeGenerator::new())?.remove("@default") {
+            Some(val) => val,
+            None => return Ok(HashMap::new()),
+        };
     flattened.retain(|_, v| v.iter().next().is_some());
 
     let mut free: HashSet<_> = flattened.keys().map(|f| f.to_owned()).collect();
