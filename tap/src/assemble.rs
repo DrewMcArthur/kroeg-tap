@@ -92,7 +92,7 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
 > {
     match value {
         Pointer::Id(id) => {
-            if seen.contains(&id) && !id.starts_with("_:") {
+            if seen.contains(&id) {
                 let mut hash = JMap::new();
                 hash.insert("@id".to_owned(), JValue::String(id));
                 return Ok((store, authorizer, items, seen, JValue::Object(hash)));
@@ -100,12 +100,17 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
                 let item = items.remove(&id).unwrap();
                 return await!(_assemble(item, depth + 1, items, store, authorizer, seen));
             }
-            if depth < 5 && !id.starts_with("_:") {
+            if depth < 5 {
                 // todo: properly deserialize graphs
                 store = if let Some(store) = store {
                     let (item, store) = await!(_get_collectionified(store, id.to_owned()))?;
                     if let Some(item) = item {
-                        let (mut store, can_show) = await!(authorizer.can_show(store, &item))?;
+                        let (mut store, can_show) = if item.id().starts_with("_:") {
+                            (store, true)
+                        } else {
+                            await!(authorizer.can_show(store, &item))?
+                        };
+
                         if !can_show {
                             let mut hash = JMap::new();
                             hash.insert("@id".to_owned(), JValue::String(id));
@@ -117,8 +122,17 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
                             .types
                             .contains(&as2!(OrderedCollection).to_string())
                         {
-                            let (s, t, auth, o) =
-                                await!(assemble(item, depth + 1, Some(store), authorizer, seen))?;
+                            let (s, t, auth, o) = await!(assemble(
+                                item,
+                                if item.id().starts_with("_:") {
+                                    depth
+                                } else {
+                                    depth + 1
+                                },
+                                Some(store),
+                                authorizer,
+                                seen
+                            ))?;
                             store = t.unwrap();
                             authorizer = auth;
                             seen = s;
