@@ -377,7 +377,7 @@ pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError
         }
     }
 
-    for (key, item) in &mut flattened {
+    for (_, item) in &mut flattened {
         for (_, values) in item.iter_mut() {
             _rename_vec(&rewrite_id, values);
         }

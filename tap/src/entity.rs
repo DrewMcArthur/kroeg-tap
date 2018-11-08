@@ -7,7 +7,7 @@ use serde_json::Value as JValue;
 
 use std::collections::HashMap;
 
-use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError, Pointer};
+use jsonld::nodemap::{generate_node_map, BlankNodeGenerator, Entity, NodeMapError, Pointer};
 
 use super::user::Context;
 
@@ -18,6 +18,41 @@ pub struct StoreItem {
     pub(crate) id: String,
     pub(crate) data: HashMap<String, Entity>,
     i: u32,
+}
+
+pub struct StoreItemNodeGenerator {
+    i: u32,
+    data: HashMap<String, String>,
+}
+
+impl StoreItemNodeGenerator {
+    pub fn new() -> StoreItemNodeGenerator {
+        StoreItemNodeGenerator {
+            i: 0,
+            data: HashMap::new(),
+        }
+    }
+}
+
+impl BlankNodeGenerator for StoreItemNodeGenerator {
+    fn generate_blank_node(&mut self, id: Option<&str>) -> String {
+        if let Some(id) = id {
+            if id.starts_with("_:http") {
+                return id.to_owned();
+            }
+
+            if !self.data.contains_key(id) {
+                let new_id = format!("_:b{}", self.i);
+                self.i += 1;
+                self.data.insert(id.to_owned(), new_id);
+            }
+
+            self.data[id].to_owned()
+        } else {
+            self.i += 1;
+            format!("_:b{}", self.i - 1)
+        }
+    }
 }
 
 impl StoreItem {
@@ -109,7 +144,7 @@ impl StoreItem {
     /// The `main` property is used to store the main object, it should be
     /// the only non-blank node in the map.
     pub fn parse(main: &str, entity: JValue) -> Result<StoreItem, NodeMapError> {
-        let mut node_map = generate_node_map(entity, &mut DefaultNodeGenerator::new())?
+        let mut node_map = generate_node_map(entity, &mut StoreItemNodeGenerator::new())?
             .remove("@default")
             .unwrap();
         node_map.retain(|_, v| v.iter().next().is_some());
