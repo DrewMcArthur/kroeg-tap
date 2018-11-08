@@ -9,6 +9,7 @@ use entitystore::EntityStore;
 use futures::prelude::{await, *};
 
 use auth::Authorizer;
+use id::get_suggestion;
 
 use jsonld::nodemap::{generate_node_map, DefaultNodeGenerator, Entity, NodeMapError, Pointer};
 
@@ -263,75 +264,129 @@ fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {
     }
 }
 
-/// Untangles a JSON-LD object, returning all the objects split up into their respective
-/// `StoreItem`s. May not return the expected value in some cases.
-pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError> {
-    // the tangle map stores a list of node -> node mappings
-    let mut tangle_map: HashMap<String, Vec<String>> = HashMap::new();
+fn _rename_vec(map: &HashMap<&String, String>, data: &mut Vec<Pointer>) {
+    for value in data {
+        match value {
+            Pointer::Id(ref mut id) => {
+                if map.contains_key(id) {
+                    *id = map[id].to_owned();
+                }
+            }
 
+            Pointer::List(ref mut list) => _rename_vec(map, list),
+            _ => {}
+        };
+    }
+}
+
+fn find_non_blank<'a>(
+    map: &'a HashMap<String, Vec<String>>,
+    item: &'a String,
+    edges: &mut HashSet<(&'a String, &'a String)>,
+) -> Option<&'a String> {
+    for (i, val) in map {
+        if edges.contains(&(i, item)) {
+            continue;
+        }
+
+        edges.insert((i, item));
+
+        if val.contains(item) {
+            if !i.starts_with("_:") {
+                return Some(i);
+            }
+
+            if let Some(item) = find_non_blank(map, i, edges) {
+                return Some(item);
+            }
+        }
+    }
+
+    None
+}
+
+pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError> {
+    // Build a node map, aka a flattened json-ld graph.
     let mut flattened =
         match generate_node_map(data, &mut DefaultNodeGenerator::new())?.remove("@default") {
             Some(val) => val,
             None => return Ok(HashMap::new()),
         };
+
+    // Remove all objects where there's no actual data inside, aka references to other objects.
     flattened.retain(|_, v| v.iter().next().is_some());
 
-    let mut free: HashSet<_> = flattened.keys().map(|f| f.to_owned()).collect();
+    let mut values = Vec::new();
+
+    let mut tangle_map = HashMap::new();
     for (key, item) in flattened.iter() {
+        // Build a Vec<String> of all the ID values inside this object
         let mut tangles = Vec::new();
-        for (_, ivalues) in item.iter() {
-            _untangle_vec(ivalues, &mut tangles);
+        for (_, values) in item.iter() {
+            _untangle_vec(values, &mut tangles);
         }
 
-        for tangle in tangles.iter() {
-            free.remove(tangle);
+        for value in &tangles {
+            // Note down graph edge for naming.
+            values.push((key.to_owned(), value.to_owned()));
         }
 
-        if item.iter().next().is_some() {
-            tangle_map.insert(key.to_owned(), tangles);
+        tangle_map.insert(key.to_owned(), tangles);
+    }
+
+    let mut rewrite_id = HashMap::new();
+
+    for (id, _) in &tangle_map {
+        if !id.starts_with("_:") || rewrite_id.contains_key(&id) {
+            continue;
+        }
+
+        if let Some(value) = find_non_blank(&tangle_map, id, &mut HashSet::new()) {
+            // woo! this object is rooted in another object! record it as _:https://example.com/object:b1
+
+            let i = rewrite_id.len();
+            rewrite_id.insert(id, format!("_:{}:b{}", value, i));
         } else {
-            free.remove(key);
+            // _:unrooted:1234-5678-1234-5678-1234-5678:b0
+            // should be random enough??? maybe pass in outside context (e.g. id??)
+            // eh whatever.
+
+            let i = rewrite_id.len();
+            rewrite_id.insert(
+                id,
+                format!(
+                    "_:unrooted-{}-{}-{}:b{}",
+                    get_suggestion(0),
+                    get_suggestion(0),
+                    get_suggestion(0),
+                    i
+                ),
+            );
         }
     }
 
-    let mut untangled = HashSet::new();
-    let roots: Vec<_> = tangle_map
-        .keys()
-        .filter(|a| !a.starts_with("_:"))
-        .map(|a| a.to_owned())
-        .collect();
-
-    // no roots, so we can skip all this magic
-    if roots.len() == 0 {
-        let k = free.iter().next().or(tangle_map.keys().next()).unwrap();
-        let mut map = HashMap::new();
-        map.insert(k.to_owned(), StoreItem::new(k.to_owned(), flattened));
-        return Ok(map);
-    }
-
-    let mut result = HashMap::new();
-    for root in roots {
-        let mut to_untangle = tangle_map.remove(&root).unwrap();
-        let mut items = HashMap::new();
-        items.insert(root.to_owned(), flattened.remove(&root).unwrap());
-        while to_untangle.len() > 0 {
-            let item = to_untangle.pop().unwrap();
-            if !item.starts_with("_:") || !tangle_map.contains_key(&item) {
-                continue;
-            }
-
-            if untangled.contains(&item) {
-                panic!("too tangled")
-            }
-
-            to_untangle.append(&mut tangle_map.remove(&item).unwrap());
-            items.insert(item.to_owned(), flattened.remove(&item).unwrap());
-            untangled.insert(item);
+    for (key, item) in &mut flattened {
+        for (_, values) in item.iter_mut() {
+            _rename_vec(&rewrite_id, values);
         }
 
-        let storeitem = StoreItem::new(root.to_owned(), items);
-        result.insert(root, storeitem);
+        if rewrite_id.contains_key(&item.id) {
+            item.id = rewrite_id[&item.id].to_owned();
+        }
     }
 
-    Ok(result)
+    Ok(flattened
+        .into_iter()
+        .map(|(k, v)| {
+            let mut map = HashMap::new();
+            let k = if rewrite_id.contains_key(&k) {
+                rewrite_id[&k].to_owned()
+            } else {
+                k
+            };
+
+            map.insert(k.to_owned(), v);
+            (k.to_owned(), StoreItem::new(k, map))
+        })
+        .collect())
 }
