@@ -122,13 +122,11 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
                             .types
                             .contains(&as2!(OrderedCollection).to_string())
                         {
+                            let is_blank = item.id().starts_with("_:");
+
                             let (s, t, auth, o) = await!(assemble(
                                 item,
-                                if item.id().starts_with("_:") {
-                                    depth
-                                } else {
-                                    depth + 1
-                                },
+                                if is_blank { depth } else { depth + 1 },
                                 Some(store),
                                 authorizer,
                                 seen
