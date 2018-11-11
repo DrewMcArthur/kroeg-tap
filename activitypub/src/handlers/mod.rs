@@ -25,3 +25,7 @@ pub use self::client_undo::*;
 // S2S, adds reply to owned inReplyTo objects
 mod server_create;
 pub use self::server_create::*;
+
+// S2S, records like on owned objects
+mod server_like;
+pub use self::server_like::*;

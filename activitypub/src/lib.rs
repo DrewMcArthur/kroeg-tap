@@ -1,4 +1,4 @@
-#![feature(generators)]
+#![feature(generators, nll, bind_by_move_pattern_guards, never_type)]
 
 #[macro_use]
 extern crate kroeg_tap;
@@ -12,3 +12,6 @@ extern crate openssl;
 extern crate serde_json;
 
 pub mod handlers;
+
+#[macro_use]
+pub mod test;
