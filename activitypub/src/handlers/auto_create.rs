@@ -4,20 +4,21 @@ use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{await, *};
+use futures::{
+    future::{self, Either},
+    Future,
+};
 
 pub struct AutomaticCreateHandler;
 
 #[derive(Debug)]
 pub enum AutomaticCreateError {
-    NoObject,
     ImproperActivity,
 }
 
 impl fmt::Display for AutomaticCreateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AutomaticCreateError::NoObject => write!(f, "No as:object!"),
             AutomaticCreateError::ImproperActivity => {
                 write!(f, "Improper activity, did you forget the as:actor?")
             }
@@ -31,7 +32,7 @@ impl Error for AutomaticCreateError {
     }
 }
 
-const DEFAULT_ACTIVITIES: [&'static str; 28] = [
+const DEFAULT_ACTIVITIES: &'static [&'static str] = &[
     as2!(Accept),
     as2!(Add),
     as2!(Announce),
@@ -82,75 +83,78 @@ fn object_type(entity: &StoreItem) -> ObjectType {
     }
 }
 
+const TO_CLONE: &'static [&'static str] =
+    &[as2!(to), as2!(cc), as2!(bto), as2!(bcc), as2!(audience)];
+
 impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
-    #[async(boxed_send)]
     fn handle(
         &self,
         context: Context,
-        entitystore: T,
+        store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
-        let (elem, entitystore) = await!(entitystore.get(elem, false)).map_err(box_store_error)?;
+    ) -> Box<
+        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
+    > {
+        let root = elem.to_owned();
 
-        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
+        Box::new(
+            store
+                .get(elem, false)
+                .map_err(box_store_error)
+                .and_then(move |(elem, store)| {
+                    let elem = match elem {
+                        Some(elem) => elem,
+                        None => return Either::A(future::ok((context, store, root))),
+                    };
 
-        match object_type(&elem) {
-            ObjectType::Activity => Ok((context, entitystore, elem.id().to_owned())),
-            ObjectType::ImproperActivity => Err((
-                Box::new(AutomaticCreateError::ImproperActivity),
-                entitystore,
-            )),
-            ObjectType::Object => {
-                let (context, entitystore, id) = await!(assign_id(
-                    context,
-                    entitystore,
-                    Some("activity".to_string()),
-                    Some(elem.id().to_owned()),
-                    1
-                ))
-                .map_err(box_store_error)?;
+                    match object_type(&elem) {
+                        ObjectType::Activity => {
+                            return Either::A(future::ok((context, store, root)))
+                        }
+                        ObjectType::ImproperActivity => {
+                            return Either::A(future::err((
+                                AutomaticCreateError::ImproperActivity.into(),
+                                store,
+                            )))
+                        }
+                        ObjectType::Object => {}
+                    }
 
-                let mut entity = StoreItem::parse(
-                    &id,
-                    json!({
-                    "@id": id,
-                    "@type": [as2!(Create)],
-                    as2!(object): [{"@id": elem.id()}]
+                    Either::B(
+                        assign_id(
+                            context,
+                            store,
+                            Some("activity".to_owned()),
+                            Some(root.to_owned()),
+                            1,
+                        )
+                        .and_then(move |(context, store, id)| {
+                            let mut activity = StoreItem::parse(
+                                &id,
+                                json!({
+                        "@id": id,
+                        "@type": [as2!(Create)],
+                        as2!(object): [{"@id": elem.id()}],
+                        as2!(actor): [{"@value": &context.user.subject}]
+                    }),
+                            )
+                            .unwrap();
+
+                            for predicate in TO_CLONE {
+                                activity
+                                    .main_mut()
+                                    .get_mut(predicate)
+                                    .extend_from_slice(&elem.main()[predicate]);
+                            }
+
+                            store
+                                .put(activity.id().to_owned(), activity)
+                                .map(move |(item, store)| (context, store, item.id().to_owned()))
+                        })
+                        .map_err(box_store_error),
+                    )
                 }),
-                )
-                .expect("cannot fail, static input");
-
-                entity
-                    .main_mut()
-                    .get_mut(as2!(actor))
-                    .push(Pointer::Id(context.user.subject.to_owned()));
-                entity
-                    .main_mut()
-                    .get_mut(as2!(to))
-                    .append(&mut elem.main_mut()[as2!(to)].clone());
-                entity
-                    .main_mut()
-                    .get_mut(as2!(cc))
-                    .append(&mut elem.main_mut()[as2!(cc)].clone());
-                entity
-                    .main_mut()
-                    .get_mut(as2!(bto))
-                    .append(&mut elem.main_mut()[as2!(bto)].clone());
-                entity
-                    .main_mut()
-                    .get_mut(as2!(bcc))
-                    .append(&mut elem.main_mut()[as2!(bcc)].clone());
-                entity
-                    .main_mut()
-                    .get_mut(as2!(audience))
-                    .append(&mut elem.main_mut()[as2!(audience)].clone());
-
-                let (_, entitystore) =
-                    await!(entitystore.put(id.to_owned(), entity)).map_err(box_store_error)?;
-
-                Ok((context, entitystore, id))
-            }
-        }
+        )
     }
 }
