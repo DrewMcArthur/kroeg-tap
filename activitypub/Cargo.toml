@@ -10,3 +10,4 @@ diesel = { version = "~1.2", features = ["postgres"] }
 kroeg-tap = { path = "../tap" }
 futures-await = "0.1"
 openssl = "0.10"
+url = "1.7"

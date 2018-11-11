@@ -1,13 +1,12 @@
-use jsonld::nodemap::Pointer;
-use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
-
-use std::error::Error;
-use std::fmt;
-
 use futures::{
     future::{self, Either},
     Future,
 };
+use jsonld::nodemap::Pointer;
+use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
+use std::error::Error;
+use std::fmt;
+use url::Url;
 
 #[derive(Debug)]
 pub enum RequiredEventsError {
@@ -54,6 +53,14 @@ impl Error for RequiredEventsError {
 
 pub struct VerifyRequiredEventsHandler(pub bool);
 
+fn same_origin(a: &str, b: &str) -> bool {
+    match (Url::parse(a), Url::parse(b)) {
+        (Ok(a), Ok(b)) => a.origin() == b.origin(),
+
+        _ => false,
+    }
+}
+
 // It makes no sense to filter anything that isn't Create/Update/Delete, so list them here
 const APPLIES_TO_TYPES: [&'static str; 3] = [as2!(Create), as2!(Update), as2!(Delete)];
 
@@ -75,7 +82,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
             entitystore
                 .get(elem, false)
                 .map_err(box_store_error)
-                .and_then(|(val, store)| match val {
+                .and_then(move |(val, store)| match val {
                     Some(val)
                         if val
                             .main()
@@ -85,8 +92,12 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                     {
                         match &val.main()[as2!(actor)] as &[Pointer] {
                             [] => future::err((RequiredEventsError::MissingActor.into(), store)),
-                            [Pointer::Id(actor)] if actor == &subject => {
-                                future::ok((Some((subject, val)), store))
+                            // actor and the object of the actor being on the same origin are safe,
+                            // both will be compromised at the same time
+                            [Pointer::Id(actor)]
+                                if actor == &subject || same_origin(actor, val.id()) =>
+                            {
+                                future::ok((Some((actor.to_owned(), val)), store))
                             }
                             _ => future::err((RequiredEventsError::NotAllowedtoAct.into(), store)),
                         }
