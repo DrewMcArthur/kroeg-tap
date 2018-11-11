@@ -132,11 +132,11 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
                             let mut activity = StoreItem::parse(
                                 &id,
                                 json!({
-                        "@id": id,
-                        "@type": [as2!(Create)],
-                        as2!(object): [{"@id": elem.id()}],
-                        as2!(actor): [{"@value": &context.user.subject}]
-                    }),
+                                    "@id": id,
+                                    "@type": [as2!(Create)],
+                                    as2!(object): [{"@id": elem.id()}],
+                                    as2!(actor): [{"@id": &context.user.subject}]
+                                }),
                             )
                             .unwrap();
 
