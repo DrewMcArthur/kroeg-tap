@@ -84,16 +84,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                 .get(elem, false)
                 .map_err(box_store_error)
                 .and_then(move |(val, store)| match val {
-                    Some(val)
-                        if val.main().types.iter().any(|f| {
-                            if local_post {
-                                APPLIES_TO_TYPES_LOCAL
-                            } else {
-                                APPLIES_TO_TYPES_REMOTE
-                            }
-                            .contains(&(&*f as &str))
-                        }) =>
-                    {
+                    Some(val) => {
                         match &val.main()[as2!(actor)] as &[Pointer] {
                             [] => future::err((RequiredEventsError::MissingActor.into(), store)),
                             // actor and the object of the actor being on the same origin are safe,
@@ -106,11 +97,19 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                             _ => future::err((RequiredEventsError::NotAllowedtoAct.into(), store)),
                         }
                     }
-                    Some(_) => future::ok((None, store)),
                     _ => future::err((RequiredEventsError::FailedToRetrieve.into(), store)),
                 })
                 .and_then(move |(val, store)| match val {
-                    Some((subject, val)) => {
+                    Some((subject, val))
+                        if val.main().types.iter().any(|f| {
+                            if local_post {
+                                APPLIES_TO_TYPES_LOCAL
+                            } else {
+                                APPLIES_TO_TYPES_REMOTE
+                            }
+                            .contains(&(&*f as &str))
+                        }) =>
+                    {
                         match &(val.main()[as2!(object)].clone()) as &[Pointer] {
                             [Pointer::Id(id)] => Either::A(
                                 store
@@ -126,7 +125,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                         }
                     }
 
-                    None => Either::B(future::ok((None, store))),
+                    _ => Either::B(future::ok((None, store))),
                 })
                 .and_then(move |(val, store)| match val {
                     Some((actor, val, Some(elem))) => {
@@ -186,7 +185,31 @@ mod test {
             }),
             object_under_test!(remote "/c" => {
                 types => [as2!(Announce)];
+                as2!(actor) => ["/subject"];
                 // no actor, no object
+            }),
+            object_under_test!(remote "https://example.com/origin" => {
+                types => [as2!(Create)];
+                as2!(actor) => ["https://example.com/actor"];
+                as2!(object) => ["https://example.com/object"];
+            }),
+            object_under_test!(remote "https://example.com/object" => {
+                types => [as2!(Note)];
+                as2!(attributedTo) => ["https://example.com/actor"];
+            }),
+            object_under_test!(remote "https://example.com/origin/b" => {
+                types => [as2!(Create)];
+                as2!(actor) => ["https://example.com/actor"];
+                as2!(object) => ["https://example.com/object/b"];
+            }),
+            object_under_test!(remote "https://example.com/origin/c" => {
+                types => [as2!(Announce)];
+                as2!(actor) => ["https://example.com/actor"];
+                as2!(object) => ["https://contoso.com/actor"];
+            }),
+            object_under_test!(remote "https://example.com/object/b" => {
+                types => [as2!(Note)];
+                as2!(attributedTo) => ["https://contoso.com/actor"];
             }),
         ])
     }
@@ -247,6 +270,67 @@ mod test {
         let (context, store) = setup();
         match VerifyRequiredEventsHandler(true)
             .handle(context, store, "/inbox".to_owned(), "/c".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
+            Err((e, _)) => panic!("handler refused object: {}", e),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn same_origin() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(
+                context,
+                store,
+                "/inbox".to_owned(),
+                "https://example.com/origin".to_owned(),
+            )
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
+            Err((e, _)) => panic!("handler refused object: {}", e),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn different_origin() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(
+                context,
+                store,
+                "/inbox".to_owned(),
+                "https://example.com/origin/b".to_owned(),
+            )
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => panic!("handler accepted object"),
+            Err((e, _)) => match e.downcast() {
+                Ok(val) => match *val {
+                    RequiredEventsError::ActorAttributedToDoNotMatch => { /* ok! */ }
+                    e => panic!("handler refused object: {}", e),
+                },
+
+                Err(e) => panic!("handler refused object: {}", e),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn different_origin_announce() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(
+                context,
+                store,
+                "/inbox".to_owned(),
+                "https://example.com/origin/c".to_owned(),
+            )
             .poll()
         {
             Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
