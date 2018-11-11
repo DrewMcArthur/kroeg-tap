@@ -12,89 +12,19 @@ use openssl::error::ErrorStack;
 use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 
-use futures::prelude::{await, *};
-
-#[derive(Debug)]
-pub enum CreateActorError {
-    MissingRequired(String),
-    ExistingPredicate(String),
-    OpenSSLError(ErrorStack),
-}
-
-impl fmt::Display for CreateActorError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CreateActorError::MissingRequired(ref val) => write!(
-                f,
-                "The {} predicate is missing or occurs more than once",
-                val
-            ),
-            CreateActorError::ExistingPredicate(ref val) => {
-                write!(f, "The {} predicate should not have been passed", val)
-            }
-            CreateActorError::OpenSSLError(ref err) => {
-                write!(f, "failed to do RSA key magic: {}", err)
-            }
-        }
-    }
-}
-
-impl Error for CreateActorError {
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
+use futures::{
+    future::{self, Either},
+    stream, Future, Stream,
+};
 
 pub struct CreateActorHandler;
 
-fn _ensure<T: EntityStore + 'static>(
-    store: T,
-    entity: &Entity,
-    name: &str,
-) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
-    if entity[name].len() == 1 {
-        Ok((entity[name][0].to_owned(), store))
-    } else {
-        Err((
-            Box::new(CreateActorError::MissingRequired(name.to_owned())),
-            store,
-        ))
-    }
-}
+fn create_key_obj(owner: &str) -> Result<StoreItem, Box<Error + Send + Sync + 'static>> {
+    let id = format!("{}#public-key", owner);
+    let key = Rsa::generate(2048)?;
 
-fn _set<T: EntityStore + 'static>(
-    store: T,
-    entity: &mut Entity,
-    name: &str,
-    val: Pointer,
-) -> Result<T, (Box<Error + Send + Sync + 'static>, T)> {
-    if entity[name].len() != 0 {
-        Err((
-            Box::new(CreateActorError::ExistingPredicate(name.to_owned())),
-            store,
-        ))
-    } else {
-        entity.get_mut(name).push(val);
-        Ok(store)
-    }
-}
-
-fn create_key_obj(
-    owner: &str,
-) -> Result<(Rsa<Private>, StoreItem), Box<Error + Send + Sync + 'static>> {
-    let id = format!("{}#key", owner);
-
-    let key = Rsa::generate(2048).map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?;
-    let private_pem = String::from_utf8(
-        key.private_key_to_pem()
-            .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
-    )
-    .unwrap();
-    let public_pem = String::from_utf8(
-        key.public_key_to_pem()
-            .map_err(|e| Box::new(CreateActorError::OpenSSLError(e)))?,
-    )
-    .unwrap();
+    let private_pem = String::from_utf8(key.private_key_to_pem()?)?;
+    let public_pem = String::from_utf8(key.public_key_to_pem()?)?;
 
     let mut keyobj = Entity::new(id.to_owned());
     keyobj.types.push(sec!(Key).to_owned());
@@ -115,188 +45,161 @@ fn create_key_obj(
         language: None,
     }));
 
-    Ok((key, storeitem))
+    Ok(storeitem)
 }
 
-fn create_collection(id: &str, owned: &str, boxtype: &str) -> StoreItem {
+fn build_collection(id: &str, owned: &str, boxtype: Option<&str>, context: &Context) -> StoreItem {
     let mut item = StoreItem::parse(
         id,
         json!({
-                "@id": id,
-                "@type": [as2!(OrderedCollection)],
-                as2!(partOf): [{"@id": owned}]
-            }),
+            "@id": id,
+            "@type": [as2!(OrderedCollection)],
+            as2!(partOf): [{"@id": owned}]
+        }),
     )
     .unwrap();
 
-    item.meta()[kroeg!(box)].push(Pointer::Id(boxtype.to_owned()));
+    if let Some(boxtype) = boxtype {
+        item.meta()[kroeg!(box)].push(Pointer::Id(boxtype.to_owned()));
+    }
+
+    item.meta()[kroeg!(instance)].push(Pointer::Value(Value {
+        value: context.instance_id.into(),
+        type_id: Some("http://www.w3.org/2001/XMLSchema#integer".to_owned()),
+        language: None,
+    }));
 
     item
 }
 
-#[async]
-fn assign_and_store<T: EntityStore + 'static>(
-    context: Context,
+// inbox, outbox, following, followers, liked
+const COLLECTIONS: &'static [(&'static str, &'static str, Option<&'static str>)] = &[
+    ("inbox", ldp!(inbox), Some(ldp!(inbox))),
+    ("outbox", as2!(outbox), Some(as2!(outbox))),
+    ("following", as2!(following), None),
+    ("followers", as2!(followers), None),
+    ("liked", as2!(liked), None),
+];
+
+fn add_all_collections<T: EntityStore>(
+    item: StoreItem,
     store: T,
-    parent: String,
-    object: String,
-) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
-    let (context, mut store, collection) = await!(assign_id(
-        context,
-        store,
-        Some(object),
-        Some(parent.to_owned()),
-        1
-    ))
-    .map_err(box_store_error)?;
+    context: Context,
+) -> impl Future<Item = (Context, T, StoreItem), Error = (Box<Error + Send + Sync + 'static>, T)> {
+    stream::iter_ok(COLLECTIONS.iter())
+        .fold(
+            (item, store, context),
+            |(mut item, store, context), (typ, key, boxtype)| {
+                if item.main()[key].len() != 0 {
+                    return Either::A(future::err((
+                        format!("predicate {} already exists", key).into(),
+                        store,
+                    )));
+                }
 
-    let (collection, store) = await!(store.put(
-        collection.to_owned(),
-        StoreItem::parse(
-            &collection,
-            json!({
-                    "@id": &collection,
-                    "@type": [as2!(OrderedCollection)],
-                    as2!(partOf): [{"@id": &parent}]
-                })
+                Either::B(
+                    assign_id(
+                        context,
+                        store,
+                        Some(typ.to_string()),
+                        Some(item.id().to_owned()),
+                        1,
+                    )
+                    .and_then(move |(context, store, collection_id)| {
+                        let collection =
+                            build_collection(&collection_id, item.id(), *boxtype, &context);
+
+                        item.main_mut()
+                            .get_mut(key)
+                            .push(Pointer::Id(collection_id.to_owned()));
+
+                        store
+                            .put(collection_id, collection)
+                            .map(move |(collection, store)| (item, store, context))
+                    })
+                    .map_err(box_store_error),
+                )
+            },
         )
-        .unwrap()
-    ))
-    .map_err(box_store_error)?;
+        .and_then(|(mut item, store, context)| {
+            if item.main()[sec!(publicKey)].len() != 0 {
+                return Either::A(future::err((
+                    "predicate publicKey already exists".into(),
+                    store,
+                )));
+            }
 
-    Ok((context, store, collection.id().to_owned()))
+            let key = match create_key_obj(item.id()) {
+                Ok(key) => key,
+                Err(e) => return Either::A(future::err((e.into(), store))),
+            };
+
+            item.main_mut()[as2!(publicKey)].push(Pointer::Id(key.id().to_owned()));
+
+            Either::B(
+                store
+                    .put(key.id().to_owned(), key)
+                    .and_then(move |(_, store)| store.put(item.id().to_owned(), item))
+                    .map(|(item, store)| (context, store, item))
+                    .map_err(box_store_error),
+            )
+        })
 }
 
 impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
-    #[async(boxed_send)]
     fn handle(
         &self,
         context: Context,
         store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
+    ) -> Box<
+        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)>
+            + Send
+            + 'static,
+    > {
         let root = elem.to_owned();
+        Box::new(
+            store
+                .get(elem, false)
+                .map_err(box_store_error)
+                .and_then(move |(elem, store)| {
+                    let person_future = match elem {
+                        Some(elem) if elem.main().types.contains(&as2!(Person).to_owned()) => {
+                            Either::A(future::ok((Some(elem), store)))
+                        }
+                        Some(elem) => match &elem.main()[as2!(object)] as &[Pointer] {
+                            [Pointer::Id(obj)] => {
+                                Either::B(store.get(obj.to_owned(), false).map(|(item, store)| {
+                                    (
+                                        item.and_then(|f| {
+                                            if f.main().types.contains(&as2!(Person).to_owned()) {
+                                                Some(f)
+                                            } else {
+                                                None
+                                            }
+                                        }),
+                                        store,
+                                    )
+                                }))
+                            }
+                            _ => return Either::A(future::ok((context, store, root))),
+                        },
 
-        let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;
-        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
+                        _ => return Either::A(future::ok((context, store, root))),
+                    }
+                    .map_err(box_store_error);
 
-        let mut elem = if elem.main()[as2!(preferredUsername)].len() > 0
-            || elem.main().types.contains(&as2!(Person).to_owned())
-        {
-            elem
-        } else if elem.main().types.contains(&as2!(Create).to_owned()) {
-            let (elem, storeval) = _ensure(store, elem.main(), as2!(object))?;
-            let elem = if let Pointer::Id(id) = elem {
-                id
-            } else {
-                return Err((
-                    Box::new(CreateActorError::MissingRequired(as2!(object).to_owned())),
-                    storeval,
-                ));
-            };
-
-            let (item, storeval) = await!(storeval.get(elem, false)).map_err(box_store_error)?;
-            store = storeval;
-            item.unwrap()
-        } else {
-            return Ok((context, store, root));
-        };
-
-        if !elem.main().types.contains(&as2!(Person).to_owned()) {
-            return Ok((context, store, root));
-        }
-
-        let (_, store) = _ensure(store, elem.main(), as2!(preferredUsername))?;
-        let (_, store) = _ensure(store, elem.main(), as2!(name))?;
-
-        let (context, mut store, inbox) = await!(assign_id(
-            context,
-            store,
-            Some("inbox".to_owned()),
-            Some(elem.id().to_owned()),
-            1
-        ))
-        .map_err(box_store_error)?;
-
-        let (inbox, store) = await!(store.put(
-            inbox.to_owned(),
-            create_collection(&inbox, elem.id(), ldp!(inbox))
-        ))
-        .map_err(box_store_error)?;
-
-        let store = _set(
-            store,
-            elem.main_mut(),
-            ldp!(inbox),
-            Pointer::Id(inbox.id().to_owned()),
-        )?;
-
-        let (context, mut store, outbox) = await!(assign_id(
-            context,
-            store,
-            Some("outbox".to_owned()),
-            Some(elem.id().to_owned()),
-            1
-        ))
-        .map_err(box_store_error)?;
-
-        let (outbox, store) = await!(store.put(
-            outbox.to_owned(),
-            create_collection(&outbox, elem.id(), as2!(outbox))
-        ))
-        .map_err(box_store_error)?;
-
-        let store = _set(
-            store,
-            elem.main_mut(),
-            as2!(outbox),
-            Pointer::Id(outbox.id().to_owned()),
-        )?;
-
-        let (context, mut store, following) = await!(assign_and_store(
-            context,
-            store,
-            elem.id().to_owned(),
-            String::from("following")
-        ))?;
-
-        let store = _set(
-            store,
-            elem.main_mut(),
-            as2!(following),
-            Pointer::Id(following),
-        )?;
-
-        let (context, mut store, followers) = await!(assign_and_store(
-            context,
-            store,
-            elem.id().to_owned(),
-            String::from("followers")
-        ))?;
-
-        let store = _set(
-            store,
-            elem.main_mut(),
-            as2!(followers),
-            Pointer::Id(followers),
-        )?;
-
-        let keyobj = match create_key_obj(elem.id()) {
-            Ok((_, keyobj)) => keyobj,
-            Err(e) => return Err((e, store)),
-        };
-
-        let store = _set(
-            store,
-            elem.main_mut(),
-            sec!(publicKey),
-            Pointer::Id(keyobj.id().to_owned()),
-        )?;
-
-        let (_, store) =
-            await!(store.put(keyobj.id().to_owned(), keyobj)).map_err(box_store_error)?;
-        let (_, store) = await!(store.put(elem.id().to_owned(), elem)).map_err(box_store_error)?;
-        Ok((context, store, root))
+                    Either::B(person_future.and_then(move |(item, store)| {
+                        match item {
+                            Some(item) => Either::A(
+                                add_all_collections(item, store, context)
+                                    .map(move |(context, store, _)| (context, store, root)),
+                            ),
+                            None => Either::B(future::ok((context, store, root))),
+                        }
+                    }))
+                }),
+        )
     }
 }
