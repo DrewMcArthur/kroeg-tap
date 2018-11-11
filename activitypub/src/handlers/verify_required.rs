@@ -67,6 +67,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
     ) -> Box<
         Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
     > {
+        let root = elem.to_owned();
         let subject = context.user.subject.to_owned();
         let local_post = self.0;
 
@@ -74,7 +75,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
             entitystore
                 .get(elem, false)
                 .map_err(box_store_error)
-                .map(|(val, store)| match val {
+                .and_then(|(val, store)| match val {
                     Some(val)
                         if val
                             .main()
@@ -82,38 +83,38 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                             .iter()
                             .any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str))) =>
                     {
-                        (Some(val), store)
+                        match &val.main()[as2!(actor)] as &[Pointer] {
+                            [] => future::err((RequiredEventsError::MissingActor.into(), store)),
+                            [Pointer::Id(actor)] if actor == &subject => {
+                                future::ok((Some((subject, val)), store))
+                            }
+                            _ => future::err((RequiredEventsError::NotAllowedtoAct.into(), store)),
+                        }
                     }
-                    _ => (None, store),
+                    Some(_) => future::ok((None, store)),
+                    _ => future::err((RequiredEventsError::FailedToRetrieve.into(), store)),
                 })
                 .and_then(move |(val, store)| match val {
-                    Some(val) => match &val.main()[as2!(actor)] as &[Pointer] {
-                        [] => future::err((RequiredEventsError::MissingActor.into(), store)),
-                        [Pointer::Id(actor)] if actor == &subject => {
-                            future::ok((subject, val, store))
+                    Some((subject, val)) => {
+                        match &(val.main()[as2!(object)].clone()) as &[Pointer] {
+                            [Pointer::Id(id)] => Either::A(
+                                store
+                                    .get(id.to_owned(), false)
+                                    .map(move |(elem, store)| (Some((subject, val, elem)), store))
+                                    .map_err(box_store_error),
+                            ),
+
+                            _ => Either::B(future::err((
+                                RequiredEventsError::MissingObject.into(),
+                                store,
+                            ))),
                         }
-                        _ => future::err((RequiredEventsError::NotAllowedtoAct.into(), store)),
-                    },
-
-                    None => future::err((RequiredEventsError::FailedToRetrieve.into(), store)),
-                })
-                .and_then(move |(actor, val, store)| {
-                    match &(val.main()[as2!(object)].clone()) as &[Pointer] {
-                        [Pointer::Id(id)] => Either::A(
-                            store
-                                .get(id.to_owned(), false)
-                                .map(move |(elem, store)| (actor, val, elem, store))
-                                .map_err(box_store_error),
-                        ),
-
-                        _ => Either::B(future::err((
-                            RequiredEventsError::MissingObject.into(),
-                            store,
-                        ))),
                     }
+
+                    None => Either::B(future::ok((None, store))),
                 })
-                .and_then(move |(actor, val, elem, store)| match elem {
-                    Some(elem) => {
+                .and_then(move |(val, store)| match val {
+                    Some((actor, val, Some(elem))) => {
                         let pointer = Pointer::Id(actor.to_owned());
                         if !elem.main()[as2!(attributedTo)].contains(&pointer)
                             || (local_post
@@ -129,7 +130,8 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                         }
                     }
 
-                    _ => future::err((RequiredEventsError::MissingObject.into(), store)),
+                    Some(_) => future::err((RequiredEventsError::MissingObject.into(), store)),
+                    None => future::ok((context, store, root)),
                 }),
         )
     }
@@ -168,7 +170,7 @@ mod test {
                 as2!(attributedTo) => ["/subject"];
             }),
             object_under_test!(remote "/c" => {
-                types => [as2!(Create)];
+                types => [as2!(Announce)];
                 // no actor, no object
             }),
         ])
@@ -226,17 +228,14 @@ mod test {
     }
 
     #[test]
-    fn no_object() {
+    fn announce() {
         let (context, store) = setup();
         match VerifyRequiredEventsHandler(true)
-            .handle(context, store, "/inbox".to_owned(), "/b".to_owned())
+            .handle(context, store, "/inbox".to_owned(), "/c".to_owned())
             .poll()
         {
             Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
-            Err((e, _)) => match e.downcast::<RequiredEventsError>() {
-                Ok(_) => { /* ok! */ }
-                Err(e) => panic!("handler refused object: {}", e),
-            },
+            Err((e, _)) => panic!("handler refused object: {}", e),
             _ => unreachable!(),
         }
     }
