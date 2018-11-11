@@ -1,7 +1,6 @@
 use futures::future::{ok, FutureResult};
 use kroeg_tap::{CollectionPointer, Context, EntityStore, QuadQuery, StoreItem, User};
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 
 #[derive(Debug)]
 pub struct TestStore {
@@ -54,11 +53,11 @@ impl EntityStore for TestStore {
         ))
     }
 
-    fn find_collection(self, path: String, item: String) -> Self::ReadCollectionFuture {
+    fn find_collection(self, _path: String, _item: String) -> Self::ReadCollectionFuture {
         unimplemented!();
     }
 
-    fn read_collection_inverse(self, item: String) -> Self::ReadCollectionFuture {
+    fn read_collection_inverse(self, _item: String) -> Self::ReadCollectionFuture {
         unimplemented!();
     }
 

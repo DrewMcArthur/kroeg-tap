@@ -1,14 +1,10 @@
-use jsonld::nodemap::{Entity, Pointer};
-
-use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
-
-use std::error::Error;
-use std::fmt;
-
 use futures::{
     future::{self, Either},
     stream, Future, Stream,
 };
+use jsonld::nodemap::Pointer;
+use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
+use std::error::Error;
 
 pub struct ClientLikeHandler;
 

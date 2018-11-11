@@ -4,13 +4,9 @@ use serde_json::Value as JValue;
 
 use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
 
+use openssl::rsa::Rsa;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
-
-use openssl::error::ErrorStack;
-use openssl::pkey::Private;
-use openssl::rsa::Rsa;
 
 use futures::{
     future::{self, Either},
@@ -115,7 +111,7 @@ fn add_all_collections<T: EntityStore>(
 
                         store
                             .put(collection_id, collection)
-                            .map(move |(collection, store)| (item, store, context))
+                            .map(move |(_, store)| (item, store, context))
                     })
                     .map_err(box_store_error),
                 )

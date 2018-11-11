@@ -1,11 +1,8 @@
+use futures::prelude::{await, *};
 use jsonld::nodemap::{Entity, Pointer};
-
 use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
-
 use std::error::Error;
 use std::fmt;
-
-use futures::prelude::{await, *};
 
 #[derive(Debug)]
 pub enum ClientCreateError {
@@ -81,7 +78,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
 
         let (elem, store) = await!(store.get(elem, false)).map_err(box_store_error)?;
 
-        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
+        let elem = elem.expect("Missing the entity being handled, shouldn't happen");
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
             return Ok((context, store, root));

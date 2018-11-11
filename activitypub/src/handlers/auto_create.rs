@@ -1,4 +1,3 @@
-use jsonld::nodemap::Pointer;
 use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
 
 use std::error::Error;
