@@ -5,90 +5,108 @@ use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{await, *};
-
-#[derive(Debug)]
-pub enum ClientLikeError {
-    MissingRequired(String),
-}
-
-impl fmt::Display for ClientLikeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ClientLikeError::MissingRequired(ref val) => write!(
-                f,
-                "The {} predicate is missing or occurs more than once",
-                val
-            ),
-        }
-    }
-}
-
-impl Error for ClientLikeError {
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
-
-fn _ensure<T: EntityStore + 'static>(
-    store: T,
-    entity: &Entity,
-    name: &str,
-) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
-    if entity[name].len() == 1 {
-        Ok((entity[name][0].to_owned(), store))
-    } else {
-        Err((
-            Box::new(ClientLikeError::MissingRequired(name.to_owned())),
-            store,
-        ))
-    }
-}
+use futures::{
+    future::{self, Either},
+    stream, Future, Stream,
+};
 
 pub struct ClientLikeHandler;
 
 impl<T: EntityStore + 'static> MessageHandler<T> for ClientLikeHandler {
-    #[async(boxed_send)]
     fn handle(
         &self,
         context: Context,
         store: T,
         _inbox: String,
         elem: String,
-    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
+    ) -> Box<
+        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
+    > {
         let subject = context.user.subject.to_owned();
         let root = elem.to_owned();
 
-        let (elem, store) = await!(store.get(elem, false)).map_err(box_store_error)?;
+        Box::new(
+            store
+                .get(elem, true)
+                .and_then(|(elem, store)| match elem {
+                    Some(elem) if elem.main().types.contains(&as2!(Like).to_owned()) => {
+                        Either::A(store.get(subject, true).and_then(move |(subj, store)| {
+                            let liked = match subj {
+                                Some(val) => match &val.main()[as2!(liked)] as &[Pointer] {
+                                    [Pointer::Id(id)] => id.to_owned(),
+                                    _ => return Either::A(future::ok((context, store, root))),
+                                },
+                                _ => return Either::A(future::ok((context, store, root))),
+                            };
 
-        let mut elem = elem.expect("Missing the entity being handled, shouldn't happen");
+                            Either::B(
+                                stream::iter_ok(
+                                    elem.main()[as2!(object)]
+                                        .iter()
+                                        .filter_map(|f| match f {
+                                            Pointer::Id(id) => Some(id.to_owned()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )
+                                .fold((store, liked), |(store, liked), item| {
+                                    store
+                                        .insert_collection(liked.to_owned(), item)
+                                        .map(|store| (store, liked))
+                                })
+                                .map(|(store, _)| (context, store, root)),
+                            )
+                        }))
+                    }
 
-        if !elem.main().types.contains(&as2!(Like).to_owned()) {
-            return Ok((context, store, root));
+                    _ => Either::B(future::ok((context, store, root))),
+                })
+                .map_err(box_store_error),
+        )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::ClientLikeHandler;
+    use crate::test::TestStore;
+    use crate::{handle_object_pair, object_under_test};
+    use futures::Async;
+    use jsonld::nodemap::Entity;
+    use kroeg_tap::{Context, MessageHandler};
+
+    fn setup() -> (Context, TestStore) {
+        TestStore::new(vec![
+            object_under_test!(remote "/like" => {
+                types => [as2!(Like)];
+                as2!(object) => ["/object"];
+            }),
+            object_under_test!(local "/subject" => {
+                types => [as2!(Person)];
+                as2!(liked) => ["/liked"];
+            }),
+        ])
+    }
+
+    #[test]
+    fn handles_like() {
+        let (context, store) = setup();
+        match ClientLikeHandler
+            .handle(context, store, "/inbox".to_owned(), "/like".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => {
+                assert!(
+                    store.has_read_all(&["/like", "/subject"]),
+                    "Handler did not read the Like nor the subject"
+                );
+                assert!(
+                    store.contains("/liked", "/object"),
+                    "Handler did not register the Like"
+                );
+            }
+            Err((e, _)) => panic!("handler returned error: {}", e),
+            _ => unreachable!(),
         }
-
-        let (elem, store) = _ensure(store, elem.main(), as2!(object))?;
-        let elem = if let Pointer::Id(id) = elem {
-            id
-        } else {
-            return Err((
-                Box::new(ClientLikeError::MissingRequired(as2!(object).to_owned())),
-                store,
-            ));
-        };
-
-        let (subj, store) = await!(store.get(subject, false)).map_err(box_store_error)?;
-
-        let subj = subj.unwrap();
-
-        let store =
-            if let Some(Pointer::Id(liked)) = subj.main()[as2!(liked)].iter().next().cloned() {
-                await!(store.insert_collection(liked.to_owned(), elem.to_owned()))
-                    .map_err(box_store_error)?
-            } else {
-                store
-            };
-
-        Ok((context, store, root))
     }
 }

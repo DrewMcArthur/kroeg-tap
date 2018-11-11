@@ -4,7 +4,10 @@ use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{await, *};
+use futures::{
+    future::{self, Either},
+    Future,
+};
 
 #[derive(Debug)]
 pub enum RequiredEventsError {
@@ -51,110 +54,190 @@ impl Error for RequiredEventsError {
 
 pub struct VerifyRequiredEventsHandler(pub bool);
 
-fn equals_any_order(a: &Vec<Pointer>, b: &Vec<Pointer>) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-
-    for item in a {
-        if !b.contains(item) {
-            return false;
-        }
-    }
-
-    true
-}
-
+// It makes no sense to filter anything that isn't Create/Update/Delete, so list them here
 const APPLIES_TO_TYPES: [&'static str; 3] = [as2!(Create), as2!(Update), as2!(Delete)];
-
-impl VerifyRequiredEventsHandler {
-    #[async(boxed_send)]
-    fn _handle<T: EntityStore + 'static>(
-        is_local: bool,
-        context: Context,
-        entitystore: T,
-        _inbox: String,
-        elem: String,
-    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
-        let subject = context.user.subject.to_owned();
-
-        let (mut elem, entitystore) = match await!(entitystore.get(elem, false))
-            .map_err(box_store_error)?
-        {
-            (Some(val), store) => (val, store),
-            (None, store) => return Err((Box::new(RequiredEventsError::FailedToRetrieve), store)),
-        };
-
-        if !elem
-            .main()
-            .types
-            .iter()
-            .any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str)))
-        {
-            return Ok((context, entitystore, elem.id().to_owned()));
-        }
-
-        let actors = elem.main().get(as2!(actor)).clone();
-
-        if actors.len() != 1 {
-            return Err((Box::new(RequiredEventsError::MissingActor), entitystore));
-        } else {
-            match actors[0] {
-                Pointer::Id(ref subj) => {
-                    if subj != &subject {
-                        return Err((Box::new(RequiredEventsError::NotAllowedtoAct), entitystore));
-                    }
-                }
-
-                _ => return Err((Box::new(RequiredEventsError::NotAllowedtoAct), entitystore)),
-            }
-        }
-
-        let mut object = elem.main().get(as2!(object)).clone();
-
-        if object.len() != 1 {
-            return Err((Box::new(RequiredEventsError::MissingObject), entitystore));
-        }
-
-        match object.remove(0) {
-            Pointer::Id(id) => {
-                let (entity, entitystore) =
-                    await!(entitystore.get(id, false)).map_err(box_store_error)?;
-                if let Some(entity) = entity {
-                    if is_local
-                        && !equals_any_order(
-                            &entity.main()[as2!(attributedTo)],
-                            &elem.main()[as2!(actor)],
-                        )
-                        && !elem.main().types.contains(&String::from(as2!(Update)))
-                    {
-                        Err((
-                            Box::new(RequiredEventsError::ActorAttributedToDoNotMatch),
-                            entitystore,
-                        ))
-                    } else {
-                        Ok((context, entitystore, elem.id().to_owned()))
-                    }
-                } else {
-                    Err((Box::new(RequiredEventsError::MissingObject), entitystore))
-                }
-            }
-
-            _ => Err((Box::new(RequiredEventsError::MissingObject), entitystore)),
-        }
-    }
-}
 
 impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
     fn handle(
         &self,
         context: Context,
         entitystore: T,
-        inbox: String,
+        _inbox: String,
         elem: String,
     ) -> Box<
         Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
     > {
-        VerifyRequiredEventsHandler::_handle::<T>(self.0, context, entitystore, inbox, elem)
+        let subject = context.user.subject.to_owned();
+        let local_post = self.0;
+
+        Box::new(
+            entitystore
+                .get(elem, false)
+                .map_err(box_store_error)
+                .map(|(val, store)| match val {
+                    Some(val)
+                        if val
+                            .main()
+                            .types
+                            .iter()
+                            .any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str))) =>
+                    {
+                        (Some(val), store)
+                    }
+                    _ => (None, store),
+                })
+                .and_then(move |(val, store)| match val {
+                    Some(val) => match &val.main()[as2!(actor)] as &[Pointer] {
+                        [] => future::err((RequiredEventsError::MissingActor.into(), store)),
+                        [Pointer::Id(actor)] if actor == &subject => {
+                            future::ok((subject, val, store))
+                        }
+                        _ => future::err((RequiredEventsError::NotAllowedtoAct.into(), store)),
+                    },
+
+                    None => future::err((RequiredEventsError::FailedToRetrieve.into(), store)),
+                })
+                .and_then(move |(actor, val, store)| {
+                    match &(val.main()[as2!(object)].clone()) as &[Pointer] {
+                        [Pointer::Id(id)] => Either::A(
+                            store
+                                .get(id.to_owned(), false)
+                                .map(move |(elem, store)| (actor, val, elem, store))
+                                .map_err(box_store_error),
+                        ),
+
+                        _ => Either::B(future::err((
+                            RequiredEventsError::MissingObject.into(),
+                            store,
+                        ))),
+                    }
+                })
+                .and_then(move |(actor, val, elem, store)| match elem {
+                    Some(elem) => {
+                        let pointer = Pointer::Id(actor.to_owned());
+                        if !elem.main()[as2!(attributedTo)].contains(&pointer)
+                            || (local_post
+                                && elem.main()[as2!(attributedTo)].len() != 1
+                                && elem.id() != actor)
+                        {
+                            future::err((
+                                RequiredEventsError::ActorAttributedToDoNotMatch.into(),
+                                store,
+                            ))
+                        } else {
+                            future::ok((context, store, val.id().to_owned()))
+                        }
+                    }
+
+                    _ => future::err((RequiredEventsError::MissingObject.into(), store)),
+                }),
+        )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{RequiredEventsError, VerifyRequiredEventsHandler};
+    use crate::test::TestStore;
+    use crate::{handle_object_pair, object_under_test};
+    use futures::Async;
+    use jsonld::nodemap::Entity;
+    use kroeg_tap::{Context, MessageHandler};
+
+    fn setup() -> (Context, TestStore) {
+        TestStore::new(vec![
+            object_under_test!(local "/subject" => {
+                types => [as2!(Person)];
+            }),
+            object_under_test!(remote "/a" => {
+                types => [as2!(Create)];
+                as2!(object) => ["/a/object"];
+                as2!(actor) => ["/subject"];
+            }),
+            object_under_test!(remote "/a/object" => {
+                types => [as2!(Note)];
+                as2!(attributedTo) => ["/subject", "/a/actor"];
+            }),
+            object_under_test!(remote "/b" => {
+                types => [as2!(Create)];
+                as2!(actor) => ["/subject"];
+                as2!(object) => ["/b/object"];
+            }),
+            object_under_test!(remote "/b/object" => {
+                types => [as2!(Note)];
+                as2!(attributedTo) => ["/subject"];
+            }),
+            object_under_test!(remote "/c" => {
+                types => [as2!(Create)];
+                // no actor, no object
+            }),
+        ])
+    }
+
+    #[test]
+    fn remote_object_two_attributed() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(false)
+            .handle(context, store, "/inbox".to_owned(), "/a".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => {
+                assert!(
+                    store.has_read_all(&["/a", "/a/object"]),
+                    "Handler did not read all the expected objects"
+                );
+            }
+            Err((e, _)) => panic!("handler refused object: {}", e),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn local_object_invalid_attributed() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(context, store, "/inbox".to_owned(), "/a".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => panic!("handler accepted object"),
+            Err((e, _)) => match e.downcast() {
+                Ok(val) => match *val {
+                    RequiredEventsError::ActorAttributedToDoNotMatch => { /* ok! */ }
+                    e => panic!("handler refused object for wrong reason: {}", e),
+                },
+
+                Err(e) => panic!("handler refused object: {}", e),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn valid_object() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(context, store, "/inbox".to_owned(), "/b".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
+            Err((e, _)) => panic!("handler refused object: {}", e),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn no_object() {
+        let (context, store) = setup();
+        match VerifyRequiredEventsHandler(true)
+            .handle(context, store, "/inbox".to_owned(), "/b".to_owned())
+            .poll()
+        {
+            Ok(Async::Ready((context, store, elem))) => { /* ok! */ }
+            Err((e, _)) => match e.downcast::<RequiredEventsError>() {
+                Ok(_) => { /* ok! */ }
+                Err(e) => panic!("handler refused object: {}", e),
+            },
+            _ => unreachable!(),
+        }
     }
 }

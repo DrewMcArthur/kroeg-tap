@@ -103,68 +103,37 @@ impl TestStore {
             user: User {
                 claims: HashMap::new(),
                 issuer: None,
-                subject: "https://example.com/subject".to_owned(),
+                subject: "/subject".to_owned(),
                 audience: vec![],
                 token_identifier: "test".to_owned(),
             },
 
-            server_base: "https://example.com".to_owned(),
+            server_base: "".to_owned(),
             instance_id: 1,
         };
 
         (context, store)
     }
 
-    pub fn assert_contains(&self, val: &str, item: &str) {
-        assert!(
-            self.items
-                .get(&String::from(val))
-                .map(|f| f.iter().any(|v| v == item))
-                .unwrap_or(false),
-            "Expected {} to contain {}",
-            val,
-            item
-        );
+    pub fn contains(&self, val: &str, item: &str) -> bool {
+        self.items
+            .get(&String::from(val))
+            .map(|f| f.iter().any(|v| v == item))
+            .unwrap_or(false)
     }
 
-    pub fn assert_does_not_contain(&self, val: &str, item: &str) {
-        assert!(
-            self.items
-                .get(&String::from(val))
-                .map(|f| !f.iter().any(|v| v == item))
-                .unwrap_or(true),
-            "Expected {} to not contain {}",
-            val,
-            item
-        );
+    pub fn has_read(&self, val: &str) -> bool {
+        self.reads.contains(&String::from(val))
     }
 
-    pub fn assert_read(&self, val: &str) {
-        assert!(
-            self.reads.contains(&String::from(val)),
-            "Expected {} to be read",
-            val
-        );
-    }
+    pub fn has_read_all(&self, val: &[&str]) -> bool {
+        let mut result = true;
 
-    pub fn assert_all_read(&self, val: &[&str]) {
         for item in val {
-            self.assert_read(*item);
+            result = result && self.has_read(*item)
         }
-    }
 
-    pub fn assert_unread(&self, val: &str) {
-        assert!(
-            !self.reads.contains(&String::from(val)),
-            "Expected {} to be unread",
-            val
-        );
-    }
-
-    pub fn assert_all_unread(&self, val: &[&str]) {
-        for item in val {
-            self.assert_unread(*item);
-        }
+        result
     }
 }
 

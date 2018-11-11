@@ -93,57 +93,72 @@ mod test {
                 types => [as2!(Note)];
                 as2!(likes) => ["/object_b/likes"];
             }),
-            object_under_test!(local "/object_a/likes" => {
-                types => [as2!(OrderedCollection)];
-            }),
         ])
     }
 
     #[test]
     fn handles_base_case() {
         let (context, store) = setup();
-
-        if let Async::Ready((context, store, elem)) = ServerLikeHandler
+        match ServerLikeHandler
             .handle(context, store, "/inbox".to_owned(), "/like_a".to_owned())
             .poll()
-            .unwrap()
         {
-            store.assert_all_read(&["/like_a", "/object_a"]);
-            store.assert_contains("/object_a/likes", "/like_a");
-        } else {
-            unreachable!();
+            Ok(Async::Ready((context, store, elem))) => {
+                assert!(
+                    store.has_read_all(&["/like_a", "/object_a"]),
+                    "Handler did not read all the expected objects"
+                );
+                assert!(
+                    store.contains("/object_a/likes", "/like_a"),
+                    "Handler did not register like"
+                );
+            }
+            Err((e, _)) => panic!("Error: {}", e),
+            _ => unreachable!(),
         }
     }
 
     #[test]
     fn handles_remote_like() {
         let (context, store) = setup();
-
-        if let Async::Ready((context, store, elem)) = ServerLikeHandler
+        match ServerLikeHandler
             .handle(context, store, "/inbox".to_owned(), "/like_b".to_owned())
             .poll()
-            .unwrap()
         {
-            store.assert_all_read(&["/like_b", "/object_b"]);
-            store.assert_does_not_contain("/object_b/likes", "/like_b");
-        } else {
-            unreachable!();
+            Ok(Async::Ready((context, store, elem))) => {
+                assert!(
+                    store.has_read_all(&["/like_b", "/object_b"]),
+                    "Handler did not read all the expected objects"
+                );
+                assert!(
+                    !store.contains("/object_b/likes", "/like_b"),
+                    "Handler registered like on remote object"
+                );
+            }
+            Err((e, _)) => panic!("Error: {}", e),
+            _ => unreachable!(),
         }
     }
 
     #[test]
     fn only_applies_to_likes() {
         let (context, store) = setup();
-
-        if let Async::Ready((context, store, elem)) = ServerLikeHandler
+        match ServerLikeHandler
             .handle(context, store, "/inbox".to_owned(), "/like_c".to_owned())
             .poll()
-            .unwrap()
         {
-            store.assert_read("/like_c");
-            store.assert_unread("/object_a");
-        } else {
-            unreachable!();
+            Ok(Async::Ready((context, store, elem))) => {
+                assert!(
+                    store.has_read("/like_c"),
+                    "Handler did not read the incoming object"
+                );
+                assert!(
+                    !store.has_read("/object_a"),
+                    "Handler read the target of an Announce"
+                );
+            }
+            Err((e, _)) => panic!("Error: {}", e),
+            _ => unreachable!(),
         }
     }
 }
