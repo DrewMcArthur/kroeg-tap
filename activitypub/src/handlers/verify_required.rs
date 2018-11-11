@@ -61,8 +61,9 @@ fn same_origin(a: &str, b: &str) -> bool {
     }
 }
 
-// It makes no sense to filter anything that isn't Create/Update/Delete, so list them here
-const APPLIES_TO_TYPES: [&'static str; 3] = [as2!(Create), as2!(Update), as2!(Delete)];
+// It makes no sense to filter anything that isn't Create/Update, so list them here
+const APPLIES_TO_TYPES_REMOTE: &[&'static str] = &[as2!(Create), as2!(Update)];
+const APPLIES_TO_TYPES_LOCAL: &[&'static str] = &[as2!(Create), as2!(Update), as2!(Delete)];
 
 impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler {
     fn handle(
@@ -84,11 +85,14 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                 .map_err(box_store_error)
                 .and_then(move |(val, store)| match val {
                     Some(val)
-                        if val
-                            .main()
-                            .types
-                            .iter()
-                            .any(|f| APPLIES_TO_TYPES.contains(&(&*f as &str))) =>
+                        if val.main().types.iter().any(|f| {
+                            if local_post {
+                                APPLIES_TO_TYPES_LOCAL
+                            } else {
+                                APPLIES_TO_TYPES_REMOTE
+                            }
+                            .contains(&(&*f as &str))
+                        }) =>
                     {
                         match &val.main()[as2!(actor)] as &[Pointer] {
                             [] => future::err((RequiredEventsError::MissingActor.into(), store)),
