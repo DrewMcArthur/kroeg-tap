@@ -101,7 +101,6 @@ fn _assemble_val<T: EntityStore, R: Authorizer<T>>(
                 return await!(_assemble(item, depth + 1, items, store, authorizer, seen));
             }
             if depth < 5 || id.starts_with("_:") {
-                // todo: properly deserialize graphs
                 store = if let Some(store) = store {
                     let (item, store) = await!(_get_collectionified(store, id.to_owned()))?;
                     if let Some(item) = item {

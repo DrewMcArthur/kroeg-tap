@@ -1,6 +1,7 @@
 use entity::StoreItem;
 use entitystore::EntityStore;
-use jsonld::nodemap::Pointer;
+use jsonld::nodemap::{Pointer, Value};
+use serde_json::Value as JValue;
 use user::Context;
 
 use futures::future;
@@ -82,6 +83,37 @@ impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
             Box::new(future::ok((store, true)))
         } else {
             recursive_verify(self.0.to_owned(), store, audience)
+        }
+    }
+}
+
+pub struct LocalOnlyAuthorizer<R: Send + Sync + 'static>(u32, R);
+
+impl<R: Send + Sync + 'static> LocalOnlyAuthorizer<R> {
+    pub fn new(context: &Context, authorizer: R) -> LocalOnlyAuthorizer<R> {
+        LocalOnlyAuthorizer(context.instance_id, authorizer)
+    }
+}
+
+impl<T: EntityStore, R: Authorizer<T>> Authorizer<T> for LocalOnlyAuthorizer<R> {
+    type Future = Box<Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send>;
+
+    fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future {
+        let is_local = match entity
+            .sub(kroeg!(meta))
+            .and_then(|f| f[kroeg!(instance)].get(0))
+        {
+            Some(Pointer::Value(Value {
+                value: JValue::Number(num),
+                ..
+            })) => num.as_u64().map(|f| f == self.0 as u64).unwrap_or(false),
+            _ => false,
+        };
+
+        if !is_local {
+            Box::new(future::ok((store, false)))
+        } else {
+            Box::new(self.1.can_show(store, entity))
         }
     }
 }
