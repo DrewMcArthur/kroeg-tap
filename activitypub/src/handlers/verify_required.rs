@@ -87,10 +87,15 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                     Some(val) => {
                         match &val.main()[as2!(actor)] as &[Pointer] {
                             [] => future::err((RequiredEventsError::MissingActor.into(), store)),
-                            // actor and the object of the actor being on the same origin are safe,
-                            // both will be compromised at the same time
+                            // A. The actor is the same user as the authorized account. This is if doing e.g. follower delivery
+                            // In fan-out of reply posts, Mastodon might send out posts to other sharedInboxes. This is fine, but:
+                            // B. Either the actor is authorized properly (if the user is on the same server) in which case we can trust the data.
+                            // C. Or the actor is authorized on another origin (when on another server) which means we don't trust the data in the POST.
+                            //    (The incoming data has already been limited to be the same origin as the authorized account, yay!)
+                            // If the actor is authorized on the same origin, but different actor, this is probably spoofing. While there is no way to
+                            //    re-retrieve the data from the remote origin, there's no reason for this situation to ever occur. Let's just error out.
                             [Pointer::Id(actor)]
-                                if actor == &subject || same_origin(actor, val.id()) =>
+                                if actor == &subject || (!same_origin(actor, &subject) && same_origin(actor, val.id())) =>
                             {
                                 future::ok((Some((actor.to_owned(), val)), store))
                             }
