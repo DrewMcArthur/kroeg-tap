@@ -8,7 +8,7 @@ use super::user::Context;
 use jsonld::nodemap::{Entity, Pointer, Value};
 
 use rand::{thread_rng, Rng};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const ALPHABET: [char; 32] = [
     'y', 'b', 'n', 'd', 'r', 'f', 'g', '8', 'e', 'j', 'k', 'm', 'c', 'p', 'q', 'x', 'o', 't', '1',
@@ -121,6 +121,7 @@ pub fn assign_ids<T: EntityStore>(
 ) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), (T::Error, T)> {
     let mut out = HashMap::new();
     let mut remap = HashMap::new();
+    let data = data.into_iter().collect::<BTreeMap<_, _>>();
     let roots: Vec<_> = data.keys().map(|f| f.to_owned()).collect();
     for (_, mut value) in data {
         let mut to_run = HashSet::new();

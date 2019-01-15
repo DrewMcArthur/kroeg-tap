@@ -275,7 +275,7 @@ fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {
     }
 }
 
-fn _rename_vec(map: &HashMap<&String, String>, data: &mut Vec<Pointer>) {
+fn _rename_vec(map: &HashMap<String, String>, data: &mut Vec<Pointer>) {
     for value in data {
         match value {
             Pointer::Id(ref mut id) => {
@@ -293,9 +293,12 @@ fn _rename_vec(map: &HashMap<&String, String>, data: &mut Vec<Pointer>) {
 fn find_non_blank<'a>(
     map: &'a HashMap<String, Vec<String>>,
     item: &'a String,
+    translation: &'a HashMap<String, String>,
     edges: &mut HashSet<(&'a String, &'a String)>,
 ) -> Option<&'a String> {
     for (i, val) in map {
+        let i = translation.get(i).unwrap_or(i);
+
         if edges.contains(&(i, item)) {
             continue;
         }
@@ -303,11 +306,11 @@ fn find_non_blank<'a>(
         edges.insert((i, item));
 
         if val.contains(item) {
-            if !i.starts_with("_:") {
+            if !i.starts_with("_:") || i.starts_with("_:unrooted-") {
                 return Some(i);
             }
 
-            if let Some(item) = find_non_blank(map, i, edges) {
+            if let Some(item) = find_non_blank(map, i, translation, edges) {
                 return Some(item);
             }
         }
@@ -327,36 +330,83 @@ pub fn untangle(data: JValue) -> Result<HashMap<String, StoreItem>, NodeMapError
     // Remove all objects where there's no actual data inside, aka references to other objects.
     flattened.retain(|_, v| v.iter().next().is_some());
 
-    let mut values = Vec::new();
+    let mut outgoing_edge_map = HashMap::new();
+    let mut incoming_edge_map = HashMap::new();
 
-    let mut tangle_map = HashMap::new();
+    // do a boneless topological sort
     for (key, item) in flattened.iter() {
-        // Build a Vec<String> of all the ID values inside this object
-        let mut tangles = Vec::new();
+        // Build a Vec<String> of all the outgoing edges.
+        let mut outgoing_edges = Vec::new();
         for (_, values) in item.iter() {
-            _untangle_vec(values, &mut tangles);
+            _untangle_vec(values, &mut outgoing_edges);
         }
 
-        for value in &tangles {
-            // Note down graph edge for naming.
-            values.push((key.to_owned(), value.to_owned()));
+        if !incoming_edge_map.contains_key(key) {
+            incoming_edge_map.insert(key.to_owned(), HashSet::new());
         }
 
-        tangle_map.insert(key.to_owned(), tangles);
+        for value in &outgoing_edges {
+            if !flattened.contains_key(value) {
+                // ignore objects that are not being flattened when building edge maps.
+                continue;
+            }
+
+            // store incoming edges
+            if !incoming_edge_map.contains_key(value) {
+                incoming_edge_map.insert(value.to_owned(), HashSet::new());
+            }
+
+            incoming_edge_map
+                .get_mut(value)
+                .unwrap()
+                .insert(key.to_owned());
+        }
+
+        outgoing_edge_map.insert(key.to_owned(), outgoing_edges);
+    }
+
+    let mut tangle_order = vec![];
+
+    while let Some(key) = incoming_edge_map
+        .iter()
+        .filter(|(_, a)| a.is_empty())
+        .map(|(a, _)| a.clone())
+        .next()
+    {
+        incoming_edge_map.remove(&key);
+        if let Some(edges) = outgoing_edge_map.get(&key) {
+            for edge in edges {
+                incoming_edge_map.get_mut(edge).map(|f| f.remove(&key));
+            }
+        }
+
+        tangle_order.push(key);
+    }
+
+    for (k, _) in incoming_edge_map {
+        if outgoing_edge_map.contains_key(&k) {
+            tangle_order.push(k);
+        }
     }
 
     let mut rewrite_id = HashMap::new();
 
-    for (id, _) in &tangle_map {
+    for id in tangle_order {
         if !id.starts_with("_:") || rewrite_id.contains_key(&id) {
             continue;
         }
 
-        if let Some(value) = find_non_blank(&tangle_map, id, &mut HashSet::new()) {
+        if let Some(value) =
+            find_non_blank(&outgoing_edge_map, &id, &rewrite_id, &mut HashSet::new()).cloned()
+        {
             // woo! this object is rooted in another object! record it as _:https://example.com/object:b1
 
             let i = rewrite_id.len();
-            rewrite_id.insert(id, format!("_:{}:b{}", value, i));
+            if value.starts_with("_:") {
+                rewrite_id.insert(id, format!("{}:b{}", value, i));
+            } else {
+                rewrite_id.insert(id, format!("_:{}:b{}", value, i));
+            }
         } else {
             // _:unrooted:1234-5678-1234-5678-1234-5678:b0
             // should be random enough??? maybe pass in outside context (e.g. id??)
