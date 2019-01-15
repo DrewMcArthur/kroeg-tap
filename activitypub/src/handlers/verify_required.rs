@@ -95,7 +95,9 @@ impl<T: EntityStore + 'static> MessageHandler<T> for VerifyRequiredEventsHandler
                             // If the actor is authorized on the same origin, but different actor, this is probably spoofing. While there is no way to
                             //    re-retrieve the data from the remote origin, there's no reason for this situation to ever occur. Let's just error out.
                             [Pointer::Id(actor)]
-                                if actor == &subject || (!same_origin(actor, &subject) && same_origin(actor, val.id())) =>
+                                if actor == &subject
+                                    || (!same_origin(actor, &subject)
+                                        && same_origin(actor, val.id())) =>
                             {
                                 future::ok((Some((actor.to_owned(), val)), store))
                             }

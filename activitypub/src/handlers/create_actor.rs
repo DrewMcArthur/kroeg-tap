@@ -164,23 +164,26 @@ impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
                         Some(elem) if elem.main().types.contains(&as2!(Person).to_owned()) => {
                             Either::A(future::ok((Some(elem), store)))
                         }
-                        Some(elem) if elem.main().types.contains(&as2!(Create).to_owned()) => match &elem.main()[as2!(object)] as &[Pointer] {
-                            [Pointer::Id(obj)] => {
-                                Either::B(store.get(obj.to_owned(), false).map(|(item, store)| {
-                                    (
-                                        item.and_then(|f| {
-                                            if f.main().types.contains(&as2!(Person).to_owned()) {
-                                                Some(f)
-                                            } else {
-                                                None
-                                            }
-                                        }),
-                                        store,
-                                    )
-                                }))
+                        Some(elem) if elem.main().types.contains(&as2!(Create).to_owned()) => {
+                            match &elem.main()[as2!(object)] as &[Pointer] {
+                                [Pointer::Id(obj)] => Either::B(
+                                    store.get(obj.to_owned(), false).map(|(item, store)| {
+                                        (
+                                            item.and_then(|f| {
+                                                if f.main().types.contains(&as2!(Person).to_owned())
+                                                {
+                                                    Some(f)
+                                                } else {
+                                                    None
+                                                }
+                                            }),
+                                            store,
+                                        )
+                                    }),
+                                ),
+                                _ => return Either::A(future::ok((context, store, root))),
                             }
-                            _ => return Either::A(future::ok((context, store, root))),
-                        },
+                        }
 
                         _ => return Either::A(future::ok((context, store, root))),
                     }

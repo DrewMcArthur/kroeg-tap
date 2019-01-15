@@ -14,7 +14,10 @@ impl EntityStore for TestStore {
     type GetFuture = FutureResult<(Option<StoreItem>, Self), (Self::Error, Self)>;
     type StoreFuture = FutureResult<(StoreItem, Self), (Self::Error, Self)>;
     type ReadCollectionFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
+    type ReadCollectionInverseFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
+    type FindCollectionFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
     type WriteCollectionFuture = FutureResult<Self, (Self::Error, Self)>;
+    type RemoveCollectionFuture = FutureResult<Self, (Self::Error, Self)>;
     type QueryFuture = FutureResult<(Vec<Vec<String>>, Self), (Self::Error, Self)>;
 
     fn get(mut self, path: String, local: bool) -> Self::GetFuture {
@@ -53,11 +56,11 @@ impl EntityStore for TestStore {
         ))
     }
 
-    fn find_collection(self, _path: String, _item: String) -> Self::ReadCollectionFuture {
+    fn find_collection(self, _path: String, _item: String) -> Self::FindCollectionFuture {
         unimplemented!();
     }
 
-    fn read_collection_inverse(self, _item: String) -> Self::ReadCollectionFuture {
+    fn read_collection_inverse(self, _item: String) -> Self::ReadCollectionInverseFuture {
         unimplemented!();
     }
 
@@ -75,7 +78,7 @@ impl EntityStore for TestStore {
         ok(self)
     }
 
-    fn remove_collection(mut self, path: String, item: String) -> Self::WriteCollectionFuture {
+    fn remove_collection(mut self, path: String, item: String) -> Self::RemoveCollectionFuture {
         println!("store: remove collection {}, item {}", path, item);
         if let None = self.items.get(&path) {
             return ok(self);

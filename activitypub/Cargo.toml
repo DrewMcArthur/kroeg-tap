@@ -6,7 +6,6 @@ authors = ["Puck Meerburg <puck@puckipedia.com>"]
 [dependencies]
 serde_json = "1.0"
 jsonld = { path = "../../jsonld-rs" }
-diesel = { version = "~1.2", features = ["postgres"] }
 kroeg-tap = { path = "../tap" }
 futures-await = "0.1"
 openssl = "0.10"

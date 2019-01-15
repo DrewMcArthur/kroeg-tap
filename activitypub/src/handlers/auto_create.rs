@@ -109,13 +109,13 @@ impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
 
                     match object_type(&elem) {
                         ObjectType::Activity => {
-                            return Either::A(future::ok((context, store, root)))
+                            return Either::A(future::ok((context, store, root)));
                         }
                         ObjectType::ImproperActivity => {
                             return Either::A(future::err((
                                 AutomaticCreateError::ImproperActivity.into(),
                                 store,
-                            )))
+                            )));
                         }
                         ObjectType::Object => {}
                     }

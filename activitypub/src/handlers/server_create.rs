@@ -61,7 +61,7 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
                                 return Either::A(future::err((
                                     ServerCreateError::MissingObject.into(),
                                     store,
-                                )))
+                                )));
                             }
                         };
 

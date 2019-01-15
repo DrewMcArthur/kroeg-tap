@@ -113,10 +113,10 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             let item = StoreItem::parse(
                 &id,
                 json!({
-                "@id": id,
-                "@type": [as2!(OrderedCollection)],
-                as2!(partOf): [{"@id": elem.id()}]
-            }),
+                    "@id": id,
+                    "@type": [as2!(OrderedCollection)],
+                    as2!(partOf): [{"@id": elem.id()}]
+                }),
             )
             .unwrap();
 
