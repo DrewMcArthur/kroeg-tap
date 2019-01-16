@@ -78,7 +78,7 @@ fn _remap_arr(
     context: &Context,
     arr: &mut Vec<Pointer>,
     data: &HashMap<String, String>,
-    found: &mut HashSet<String>,
+    outgoing_ids: &mut HashSet<String>,
 ) {
     for val in arr {
         match val {
@@ -87,14 +87,14 @@ fn _remap_arr(
                     continue;
                 }
 
-                found.insert(id.to_owned());
+                outgoing_ids.insert(id.to_owned());
 
                 if data.contains_key(id) {
                     *id = data[id].to_owned();
                 }
             }
 
-            Pointer::List(ref mut list) => _remap_arr(context, list, data, found),
+            Pointer::List(ref mut list) => _remap_arr(context, list, data, outgoing_ids),
 
             _ => {}
         }
@@ -105,10 +105,10 @@ fn _remap(
     context: &Context,
     entity: &mut Entity,
     data: &HashMap<String, String>,
-    found: &mut HashSet<String>,
+    outgoing_ids: &mut HashSet<String>,
 ) {
     for (_, mut value) in entity.iter_mut() {
-        _remap_arr(context, value, data, found);
+        _remap_arr(context, value, data, outgoing_ids);
     }
 }
 
@@ -121,56 +121,53 @@ pub fn assign_ids<T: EntityStore>(
 ) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), (T::Error, T)> {
     let mut out = HashMap::new();
     let mut remap = HashMap::new();
-    let data = data.into_iter().collect::<BTreeMap<_, _>>();
-    let roots: Vec<_> = data.keys().map(|f| f.to_owned()).collect();
-    for (_, mut value) in data {
-        let mut to_run = HashSet::new();
-        let mut to_do: Vec<(Option<String>, String, u32)> = Vec::new();
-        to_do.push((parent.to_owned(), value.id.to_owned(), 0));
 
-        while to_do.len() > 0 {
-            let (parent, id, depth) = to_do.remove(0);
-            if let Some(mut newitem) = value.remove(&id) {
-                if newitem.iter().next().is_some() {
-                    let mut suggestion = shortname_suggestion(&newitem);
-                    let r = loop {
-                        let (c, s, r) =
-                            await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
-                        context = c;
-                        store = s;
-                        suggestion = None;
-                        if !out.contains_key(&r) {
-                            break r;
-                        }
-                    };
+    let data = data.into_iter().collect::<BTreeMap<_, _>>(); // use the topologically assigned blank nodes.
+    let mut graph: HashMap<String, (Option<String>, u32)> = HashMap::new();
 
-                    let mut found = HashSet::new();
-                    remap.insert(newitem.id.to_owned(), r.to_owned());
-                    _remap(&context, &mut newitem, &HashMap::new(), &mut found);
+    for (id, mut value) in data {
+        let (parent, depth) = graph.remove(&id).unwrap_or((parent.clone(), 0));
+        let mut suggestion = shortname_suggestion(value.main());
 
-                    newitem.id = r.to_owned();
+        let new_id = loop {
+            let (context_val, store_val, new_id) =
+                await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
+            context = context_val;
+            store = store_val;
+            suggestion = None;
 
-                    for kv in found {
-                        if !to_run.contains(&kv) {
-                            to_run.insert(kv.to_owned());
-                            to_do.push((Some(r.to_owned()), kv, depth + 1));
-                        }
-                    }
-
-                    let mut minimap = HashMap::new();
-                    minimap.insert(r.to_owned(), newitem);
-                    let mut item = StoreItem::new(r.to_owned(), minimap);
-                    item.meta()
-                        .get_mut(kroeg!(instance))
-                        .push(Pointer::Value(Value {
-                            value: JValue::Number(context.instance_id.into()),
-                            type_id: None,
-                            language: None,
-                        }));
-                    out.insert(r, item);
-                }
+            // assign_id verifies that IDs do not conflict in the store, but these objects don't exist
+            // in the store yet. Manually check them.
+            if !out.contains_key(&new_id) {
+                break new_id;
             }
+        };
+
+        let mut outgoing_ids = HashSet::new();
+        _remap(
+            &context,
+            value.main_mut(),
+            &HashMap::new(),
+            &mut outgoing_ids,
+        );
+
+        for item in outgoing_ids {
+            graph.insert(item, (Some(new_id.to_owned()), depth + 1));
         }
+
+        value.id = new_id.to_owned();
+        value.main_mut().id = new_id.to_owned();
+        value
+            .meta()
+            .get_mut(kroeg!(instance))
+            .push(Pointer::Value(Value {
+                value: JValue::Number(context.instance_id.into()),
+                type_id: None,
+                language: None,
+            }));
+
+        remap.insert(id, new_id.to_owned());
+        out.insert(new_id, value);
     }
 
     for (_, ref mut value) in out.iter_mut() {
@@ -180,7 +177,7 @@ pub fn assign_ids<T: EntityStore>(
     Ok((
         context,
         store,
-        roots.into_iter().map(|f| remap[&f].to_owned()).collect(),
+        out.iter().map(|(f, _)| remap[f].to_owned()).collect(),
         out,
     ))
 }
