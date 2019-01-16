@@ -118,11 +118,14 @@ pub fn assign_ids<T: EntityStore>(
     mut store: T,
     parent: Option<String>,
     data: HashMap<String, StoreItem>,
-) -> Result<(Context, T, Vec<String>, HashMap<String, StoreItem>), (T::Error, T)> {
+    root: Option<String>,
+) -> Result<(Context, T, Option<String>, HashMap<String, StoreItem>), (T::Error, T)> {
     let mut out = HashMap::new();
     let mut remap = HashMap::new();
 
     let data = data.into_iter().collect::<BTreeMap<_, _>>(); // use the topologically assigned blank nodes.
+    let root = root.or_else(|| data.iter().map(|(v, _)| v.to_owned()).next());
+
     let mut graph: HashMap<String, (Option<String>, u32)> = HashMap::new();
 
     for (id, mut value) in data {
@@ -155,8 +158,11 @@ pub fn assign_ids<T: EntityStore>(
             graph.insert(item, (Some(new_id.to_owned()), depth + 1));
         }
 
+        let mut inner = value.data.remove(&value.id).unwrap();
+        inner.id = new_id.to_owned();
+        value.data.insert(new_id.to_owned(), inner);
         value.id = new_id.to_owned();
-        value.main_mut().id = new_id.to_owned();
+
         value
             .meta()
             .get_mut(kroeg!(instance))
@@ -177,7 +183,7 @@ pub fn assign_ids<T: EntityStore>(
     Ok((
         context,
         store,
-        out.iter().map(|(f, _)| remap[f].to_owned()).collect(),
+        root.and_then(|f| remap.get(&f).cloned()),
         out,
     ))
 }
