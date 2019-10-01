@@ -1,8 +1,9 @@
-use futures::prelude::{await, *};
-use jsonld::nodemap::{Entity, Pointer};
-use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
+use jsonld::nodemap::Pointer;
+use serde_json::json;
 use std::error::Error;
 use std::fmt;
+
+use kroeg_tap::{as2, assign_id, Context, MessageHandler, StoreItem};
 
 #[derive(Debug)]
 pub enum ClientCreateError {
@@ -25,94 +26,52 @@ impl fmt::Display for ClientCreateError {
     }
 }
 
-impl Error for ClientCreateError {
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
+impl Error for ClientCreateError {}
 
 pub struct ClientCreateHandler;
 
-fn _ensure<T: EntityStore + 'static>(
-    store: T,
-    entity: &Entity,
-    name: &str,
-) -> Result<(Pointer, T), (Box<Error + Send + Sync + 'static>, T)> {
-    if entity[name].len() == 1 {
-        Ok((entity[name][0].to_owned(), store))
-    } else {
-        Err((
-            Box::new(ClientCreateError::MissingRequired(name.to_owned())),
-            store,
-        ))
-    }
-}
-
-fn _set<T: EntityStore + 'static>(
-    store: T,
-    entity: &mut Entity,
-    name: &str,
-    val: Pointer,
-) -> Result<T, (Box<Error + Send + Sync + 'static>, T)> {
-    if entity[name].len() != 0 {
-        Err((
-            Box::new(ClientCreateError::ExistingPredicate(name.to_owned())),
-            store,
-        ))
-    } else {
-        entity.get_mut(name).push(val);
-        Ok(store)
-    }
-}
-
-impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
-    #[async(boxed_send)]
-    fn handle(
+#[async_trait::async_trait]
+impl MessageHandler for ClientCreateHandler {
+    async fn handle(
         &self,
-        mut context: Context,
-        store: T,
-        _inbox: String,
-        elem: String,
-    ) -> Result<(Context, T, String), (Box<Error + Send + Sync + 'static>, T)> {
-        let root = elem.to_owned();
-
-        let (elem, store) = await!(store.get(elem, false)).map_err(box_store_error)?;
-
-        let elem = elem.expect("Missing the entity being handled, shouldn't happen");
+        context: &mut Context<'_, '_>,
+        _inbox: &mut String,
+        elem: &mut String,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let elem = context
+            .entity_store
+            .get(elem.to_owned(), false)
+            .await?
+            .expect("Cannot find the entity being handled on");
 
         if !elem.main().types.contains(&as2!(Create).to_owned()) {
-            return Ok((context, store, root));
+            return Ok(());
         }
 
-        let (elem, store) = _ensure(store, elem.main(), as2!(object))?;
-        let elem = if let Pointer::Id(id) = elem {
-            id
+        let elem = if let [Pointer::Id(id)] = &elem.main()[as2!(object)] as &[Pointer] {
+            id.clone()
         } else {
-            return Err((
-                Box::new(ClientCreateError::MissingRequired(as2!(object).to_owned())),
-                store,
-            ));
+            return Err(ClientCreateError::MissingRequired(as2!(object).to_owned()).into());
         };
 
-        let (elem, mut store) = await!(store.get(elem, false)).map_err(box_store_error)?;
-        let mut elem = elem.unwrap();
+        let mut elem = context
+            .entity_store
+            .get(elem, false)
+            .await?
+            .expect("Object pointed at doesn't exist?!");
 
-        for itemname in &["likes", "shares", "replies"] {
-            let (_context, _store, id) = await!(assign_id(
+        for &itemname in &["likes", "shares", "replies"] {
+            let id = assign_id(
                 context,
-                store,
-                Some(itemname.to_string()),
+                Some(itemname.to_owned()),
                 Some(elem.id().to_owned()),
-                1
-            ))
-            .map_err(box_store_error)?;
+                1,
+            )
+            .await?;
 
-            context = _context;
-            store = _store;
-
-            let item = StoreItem::parse(
+            let mut item = StoreItem::parse(
                 &id,
-                json!({
+                &json!({
                     "@id": id,
                     "@type": [as2!(OrderedCollection)],
                     as2!(partOf): [{"@id": elem.id()}]
@@ -120,19 +79,22 @@ impl<T: EntityStore + 'static> MessageHandler<T> for ClientCreateHandler {
             )
             .unwrap();
 
-            let (_, _store) = await!(store.put(id.to_owned(), item)).map_err(box_store_error)?;
-            store = _store;
+            context.entity_store.put(id.clone(), &mut item).await?;
 
-            store = _set(
-                store,
-                elem.main_mut(),
-                &format!("https://www.w3.org/ns/activitystreams#{}", itemname),
-                Pointer::Id(id),
-            )?;
+            let name = format!("https://www.w3.org/ns/activitystreams#{}", itemname);
+
+            if !elem.main()[&name].is_empty() {
+                return Err(ClientCreateError::ExistingPredicate(name).into());
+            } else {
+                elem.main_mut().get_mut(&name).push(Pointer::Id(id));
+            }
         }
 
-        let (_, store) = await!(store.put(elem.id().to_owned(), elem)).map_err(box_store_error)?;
+        context
+            .entity_store
+            .put(elem.id().to_owned(), &mut elem)
+            .await?;
 
-        Ok((context, store, root))
+        Ok(())
     }
 }

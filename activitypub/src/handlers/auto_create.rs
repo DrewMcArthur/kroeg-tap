@@ -1,12 +1,8 @@
-use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
-
+use serde_json::json;
 use std::error::Error;
 use std::fmt;
 
-use futures::{
-    future::{self, Either},
-    Future,
-};
+use kroeg_tap::{as2, assign_id, Context, MessageHandler, StoreItem};
 
 pub struct AutomaticCreateHandler;
 
@@ -25,11 +21,7 @@ impl fmt::Display for AutomaticCreateError {
     }
 }
 
-impl Error for AutomaticCreateError {
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
+impl Error for AutomaticCreateError {}
 
 const DEFAULT_ACTIVITIES: &'static [&'static str] = &[
     as2!(Accept),
@@ -85,75 +77,56 @@ fn object_type(entity: &StoreItem) -> ObjectType {
 const TO_CLONE: &'static [&'static str] =
     &[as2!(to), as2!(cc), as2!(bto), as2!(bcc), as2!(audience)];
 
-impl<T: EntityStore + 'static> MessageHandler<T> for AutomaticCreateHandler {
-    fn handle(
+#[async_trait::async_trait]
+impl MessageHandler for AutomaticCreateHandler {
+    async fn handle(
         &self,
-        context: Context,
-        store: T,
-        _inbox: String,
-        elem: String,
-    ) -> Box<
-        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)> + Send,
-    > {
-        let root = elem.to_owned();
+        context: &mut Context<'_, '_>,
+        _inbox: &mut String,
+        elem: &mut String,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let item = match context.entity_store.get(elem.to_owned(), false).await? {
+            Some(item) => item,
+            None => return Ok(()),
+        };
 
-        Box::new(
-            store
-                .get(elem, false)
-                .map_err(box_store_error)
-                .and_then(move |(elem, store)| {
-                    let elem = match elem {
-                        Some(elem) => elem,
-                        None => return Either::A(future::ok((context, store, root))),
-                    };
+        match object_type(&item) {
+            ObjectType::Activity => return Ok(()),
+            ObjectType::ImproperActivity => {
+                return Err(AutomaticCreateError::ImproperActivity.into())
+            }
+            ObjectType::Object => (),
+        }
 
-                    match object_type(&elem) {
-                        ObjectType::Activity => {
-                            return Either::A(future::ok((context, store, root)));
-                        }
-                        ObjectType::ImproperActivity => {
-                            return Either::A(future::err((
-                                AutomaticCreateError::ImproperActivity.into(),
-                                store,
-                            )));
-                        }
-                        ObjectType::Object => {}
-                    }
-
-                    Either::B(
-                        assign_id(
-                            context,
-                            store,
-                            Some("activity".to_owned()),
-                            Some(root.to_owned()),
-                            1,
-                        )
-                        .and_then(move |(context, store, id)| {
-                            let mut activity = StoreItem::parse(
-                                &id,
-                                json!({
-                                    "@id": id,
-                                    "@type": [as2!(Create)],
-                                    as2!(object): [{"@id": elem.id()}],
-                                    as2!(actor): [{"@id": &context.user.subject}]
-                                }),
-                            )
-                            .unwrap();
-
-                            for predicate in TO_CLONE {
-                                activity
-                                    .main_mut()
-                                    .get_mut(predicate)
-                                    .extend_from_slice(&elem.main()[predicate]);
-                            }
-
-                            store
-                                .put(activity.id().to_owned(), activity)
-                                .map(move |(item, store)| (context, store, item.id().to_owned()))
-                        })
-                        .map_err(box_store_error),
-                    )
-                }),
+        let assigned_id = assign_id(
+            context,
+            Some("activity".to_owned()),
+            Some(elem.to_owned()),
+            1,
         )
+        .await?;
+
+        let mut activity = StoreItem::parse(
+            &assigned_id,
+            &json!({
+                "@id": &assigned_id,
+                "@type": [as2!(Create)],
+                as2!(object): [{"@id": item.id()}],
+                as2!(actor): [{"@id": &context.user.subject}]
+            }),
+        )
+        .unwrap();
+
+        for predicate in TO_CLONE {
+            activity
+                .main_mut()
+                .get_mut(predicate)
+                .extend_from_slice(&item.main()[predicate]);
+        }
+
+        context.entity_store.put(assigned_id, &mut activity).await?;
+        *elem = activity.id().to_owned();
+
+        Ok(())
     }
 }

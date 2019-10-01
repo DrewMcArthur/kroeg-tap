@@ -1,13 +1,20 @@
+use crate::entitystore::{EntityStore, QueueStore};
 use std::collections::HashMap;
 
 /// Context for an ActivityPub request.
-#[derive(Debug, Clone)]
-pub struct Context {
+#[derive(Debug)]
+pub struct Context<'a, 'b> {
     /// User data for this request.
     pub user: User,
 
     /// The base URI of the server, e.g. `https://example.com`
     pub server_base: String,
+
+    /// The entity store used for this request.
+    pub entity_store: &'a mut dyn EntityStore,
+
+    /// The queue store used for this request.
+    pub queue_store: &'b mut dyn QueueStore,
 
     /// Instance ID, allows for multiple servers to share a database.
     pub instance_id: u32,

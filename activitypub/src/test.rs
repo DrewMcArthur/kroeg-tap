@@ -1,5 +1,6 @@
-use futures::future::{ok, FutureResult};
-use kroeg_tap::{CollectionPointer, Context, EntityStore, QuadQuery, StoreItem, User};
+use kroeg_tap::{
+    CollectionPointer, Context, EntityStore, QuadQuery, QueueStore, StoreError, StoreItem, User,
+};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
@@ -9,62 +10,53 @@ pub struct TestStore {
     reads: HashSet<String>,
 }
 
+#[async_trait::async_trait]
 impl EntityStore for TestStore {
-    type Error = !;
-    type GetFuture = FutureResult<(Option<StoreItem>, Self), (Self::Error, Self)>;
-    type StoreFuture = FutureResult<(StoreItem, Self), (Self::Error, Self)>;
-    type ReadCollectionFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
-    type ReadCollectionInverseFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
-    type FindCollectionFuture = FutureResult<(CollectionPointer, Self), (Self::Error, Self)>;
-    type WriteCollectionFuture = FutureResult<Self, (Self::Error, Self)>;
-    type RemoveCollectionFuture = FutureResult<Self, (Self::Error, Self)>;
-    type QueryFuture = FutureResult<(Vec<Vec<String>>, Self), (Self::Error, Self)>;
-
-    fn get(mut self, path: String, local: bool) -> Self::GetFuture {
+    async fn get(&mut self, path: String, local: bool) -> Result<Option<StoreItem>, StoreError> {
         println!("store: get {} (local: {})", path, local);
         self.reads.insert(path.to_owned());
 
-        ok((self.data.get(&path).cloned(), self))
+        Ok(self.data.get(&path).cloned())
     }
 
-    fn put(mut self, path: String, item: StoreItem) -> Self::StoreFuture {
+    async fn put(&mut self, path: String, item: &mut StoreItem) -> Result<(), StoreError> {
         println!("store: put {}", path);
         self.data.insert(path, item.clone());
 
-        ok((item, self))
+        Ok(())
     }
 
-    fn query(self, _query: Vec<QuadQuery>) -> Self::QueryFuture {
-        ok((vec![], self))
+    async fn query(&mut self, _query: Vec<QuadQuery>) -> Result<Vec<Vec<String>>, StoreError> {
+        Err("not implemented".into())
     }
 
-    fn read_collection(
-        self,
+    async fn read_collection(
+        &mut self,
         path: String,
         _count: Option<u32>,
         _cursor: Option<String>,
-    ) -> Self::ReadCollectionFuture {
+    ) -> Result<CollectionPointer, StoreError> {
         println!("store: read collection {}", path);
-        ok((
-            CollectionPointer {
-                items: self.items.get(&path).cloned().unwrap_or_else(|| vec![]),
-                after: None,
-                before: None,
-                count: None,
-            },
-            self,
-        ))
+
+        Err("not implemented".into())
     }
 
-    fn find_collection(self, _path: String, _item: String) -> Self::FindCollectionFuture {
-        unimplemented!();
+    async fn find_collection(
+        &mut self,
+        _path: String,
+        _item: String,
+    ) -> Result<CollectionPointer, StoreError> {
+        Err("not implemented".into())
     }
 
-    fn read_collection_inverse(self, _item: String) -> Self::ReadCollectionInverseFuture {
-        unimplemented!();
+    async fn read_collection_inverse(
+        &mut self,
+        _item: String,
+    ) -> Result<CollectionPointer, StoreError> {
+        Err("not implemented".into())
     }
 
-    fn insert_collection(mut self, path: String, item: String) -> Self::WriteCollectionFuture {
+    async fn insert_collection(&mut self, path: String, item: String) -> Result<(), StoreError> {
         println!("store: insert collection {}, item {}", path, item);
         if let None = self.items.get(&path) {
             self.items.insert(path.to_owned(), vec![]);
@@ -75,13 +67,13 @@ impl EntityStore for TestStore {
             list.push(item);
         }
 
-        ok(self)
+        Ok(())
     }
 
-    fn remove_collection(mut self, path: String, item: String) -> Self::RemoveCollectionFuture {
+    async fn remove_collection(&mut self, path: String, item: String) -> Result<(), StoreError> {
         println!("store: remove collection {}, item {}", path, item);
         if let None = self.items.get(&path) {
-            return ok(self);
+            return Ok(());
         }
 
         let list = self.items.get_mut(&path).unwrap();
@@ -89,32 +81,17 @@ impl EntityStore for TestStore {
             list.remove(index);
         }
 
-        ok(self)
+        Ok(())
     }
 }
 
 impl TestStore {
-    pub fn new(data: Vec<StoreItem>) -> (Context, TestStore) {
-        let store = TestStore {
+    pub fn new(data: Vec<StoreItem>) -> TestStore {
+        TestStore {
             data: data.into_iter().map(|f| (f.id().to_owned(), f)).collect(),
             items: HashMap::new(),
             reads: HashSet::new(),
-        };
-
-        let context = Context {
-            user: User {
-                claims: HashMap::new(),
-                issuer: None,
-                subject: "/subject".to_owned(),
-                audience: vec![],
-                token_identifier: "test".to_owned(),
-            },
-
-            server_base: "".to_owned(),
-            instance_id: 1,
-        };
-
-        (context, store)
+        }
     }
 
     pub fn contains(&self, val: &str, item: &str) -> bool {
@@ -136,6 +113,23 @@ impl TestStore {
         }
 
         result
+    }
+
+    pub fn context<'a, 'b>(&'a mut self, queue: &'b mut dyn QueueStore) -> Context<'a, 'b> {
+        Context {
+            user: User {
+                claims: HashMap::new(),
+                issuer: None,
+                subject: "/subject".to_owned(),
+                audience: vec![],
+                token_identifier: "test".to_owned(),
+            },
+
+            server_base: "".to_owned(),
+            instance_id: 1,
+            entity_store: self,
+            queue_store: queue,
+        }
     }
 }
 

@@ -1,105 +1,59 @@
 //! Traits for all things that have to do with storing and retrieving entities.
 
-use super::entity::StoreItem;
-
-use futures::prelude::*;
+use crate::entity::StoreItem;
 
 use std::error::Error;
 use std::fmt::Debug;
 
-use super::QuadQuery;
+use crate::QuadQuery;
+
+pub type StoreError = Box<dyn Error + Send + Sync + 'static>;
 
 /// An entity store, storing JSON-LD `Entity` objects.
-pub trait EntityStore: Debug + Send + Sized + 'static {
-    /// The error type that will be returned if this store fails to get or put
-    /// the `StoreItem`
-    type Error: Error + Send + Sync + 'static;
-
-    // ---
-
-    /// The `Future` that is returned when `get`ting a `StoreItem`.
-    type GetFuture: Future<Item = (Option<StoreItem>, Self), Error = (Self::Error, Self)>
-        + 'static
-        + Send;
-
+#[async_trait::async_trait]
+pub trait EntityStore: Debug + Send {
     /// Gets a single `StoreItem` from the store. Missing entities are no error,
     /// but instead returns a `None`.
-    fn get(self, path: String, local: bool) -> Self::GetFuture;
-
-    // ---
-
-    /// The `Future` that is returned when `put`ting a `StoreItem`.
-    type StoreFuture: Future<Item = (StoreItem, Self), Error = (Self::Error, Self)> + 'static + Send;
+    async fn get(&mut self, path: String, local: bool) -> Result<Option<StoreItem>, StoreError>;
 
     /// Stores a single `StoreItem` into the store.
     ///
     /// To delete an Entity, set its type to as:Tombstone. This may
     /// instantly remove it, or queue it for possible future deletion.
-    fn put(self, path: String, item: StoreItem) -> Self::StoreFuture;
-
-    // -----
-
-    /// The `Future` that is returned when querying the database.
-    type QueryFuture: Future<Item = (Vec<Vec<String>>, Self), Error = (Self::Error, Self)>
-        + 'static
-        + Send;
+    async fn put(&mut self, path: String, item: &mut StoreItem) -> Result<(), StoreError>;
 
     /// Queries the entire store for a specific set of parameters.
     /// The return value is a list for every result in the database that matches the query.
     /// The array elements are in numeric order of the placeholders.
-    fn query(self, query: Vec<QuadQuery>) -> Self::QueryFuture;
-
-    // -----
-
-    /// The `Future` that is returned when reading the collection data.
-    type ReadCollectionFuture: Future<Item = (CollectionPointer, Self), Error = (Self::Error, Self)>
-        + 'static
-        + Send;
+    async fn query(&mut self, query: Vec<QuadQuery>) -> Result<Vec<Vec<String>>, StoreError>;
 
     /// Reads N amount of items from the collection corresponding to a specific ID. If a cursor is passed,
     /// it can be used to paginate.
-    fn read_collection(
-        self,
+    async fn read_collection(
+        &mut self,
         path: String,
         count: Option<u32>,
         cursor: Option<String>,
-    ) -> Self::ReadCollectionFuture;
-
-    // -----
-
-    type FindCollectionFuture: Future<Item = (CollectionPointer, Self), Error = (Self::Error, Self)>
-        + 'static
-        + Send;
+    ) -> Result<CollectionPointer, StoreError>;
 
     /// Finds an item in a collection. The result will contain cursors to just before and after the item, if it exists.
-    fn find_collection(self, path: String, item: String) -> Self::FindCollectionFuture;
-
-    // -----
-
-    /// The `Future` that is returned when writing into a collection.
-    type WriteCollectionFuture: Future<Item = Self, Error = (Self::Error, Self)> + 'static + Send;
+    async fn find_collection(
+        &mut self,
+        path: String,
+        item: String,
+    ) -> Result<CollectionPointer, StoreError>;
 
     /// Inserts an item into the back of the collection.
-    fn insert_collection(self, path: String, item: String) -> Self::WriteCollectionFuture;
-
-    // -----
-
-    type ReadCollectionInverseFuture: Future<
-            Item = (CollectionPointer, Self),
-            Error = (Self::Error, Self),
-        >
-        + 'static
-        + Send;
+    async fn insert_collection(&mut self, path: String, item: String) -> Result<(), StoreError>;
 
     /// Finds all the collections containing a specific object.
-    fn read_collection_inverse(self, item: String) -> Self::ReadCollectionInverseFuture;
-
-    // -----
-
-    type RemoveCollectionFuture: Future<Item = Self, Error = (Self::Error, Self)> + 'static + Send;
+    async fn read_collection_inverse(
+        &mut self,
+        item: String,
+    ) -> Result<CollectionPointer, StoreError>;
 
     /// Removes an item from the collection.
-    fn remove_collection(self, path: String, item: String) -> Self::RemoveCollectionFuture;
+    async fn remove_collection(&mut self, path: String, item: String) -> Result<(), StoreError>;
 }
 
 #[derive(Debug)]
@@ -110,59 +64,38 @@ pub struct CollectionPointer {
     pub count: Option<u32>,
 }
 
-pub trait QueueItem {
-    fn event(&self) -> &str;
-    fn data(&self) -> &str;
+#[derive(Debug)]
+pub struct QueueItem {
+    pub id: u64,
+    pub event: String,
+    pub data: String,
 }
 
-pub trait QueueStore: Debug + Send + Sized + 'static {
-    type Item: QueueItem + 'static;
-    type Error: Error + Send + Sync + 'static;
-    type GetItemFuture: Future<Item = (Option<Self::Item>, Self), Error = (Self::Error, Self)>
-        + Send
-        + 'static;
-    type MarkFuture: Future<Item = Self, Error = (Self::Error, Self)> + Send + 'static;
+#[async_trait::async_trait]
+pub trait QueueStore: Debug + Send {
+    async fn get_item(&mut self) -> Result<Option<QueueItem>, StoreError>;
 
-    fn get_item(self) -> Self::GetItemFuture;
+    async fn mark_success(&mut self, item: QueueItem) -> Result<(), StoreError>;
+    async fn mark_failure(&mut self, item: QueueItem) -> Result<(), StoreError>;
 
-    fn mark_success(self, item: Self::Item) -> Self::MarkFuture;
-    fn mark_failure(self, item: Self::Item) -> Self::MarkFuture;
-
-    fn add(self, event: String, data: String) -> Self::MarkFuture;
+    async fn add(&mut self, event: String, data: String) -> Result<(), StoreError>;
 }
 
-impl QueueItem for () {
-    fn event(&self) -> &str {
-        panic!();
-    }
-
-    fn data(&self) -> &str {
-        panic!();
-    }
-}
-
-use futures::future;
-use std::num::ParseIntError;
+#[async_trait::async_trait]
 impl QueueStore for () {
-    type Item = ();
-    type Error = ParseIntError;
-    type GetItemFuture =
-        Box<Future<Item = (Option<Self::Item>, Self), Error = (Self::Error, Self)> + Send>;
-    type MarkFuture = Box<Future<Item = Self, Error = (Self::Error, Self)> + Send>;
-
-    fn get_item(self) -> Self::GetItemFuture {
-        Box::new(future::ok((None, ())))
+    async fn get_item(&mut self) -> Result<Option<QueueItem>, StoreError> {
+        Err("hewwo".into())
     }
 
-    fn mark_success(self, item: Self::Item) -> Self::MarkFuture {
-        Box::new(future::ok(()))
+    async fn mark_success(&mut self, _: QueueItem) -> Result<(), StoreError> {
+        Err("hewwo".into())
     }
 
-    fn mark_failure(self, item: Self::Item) -> Self::MarkFuture {
-        Box::new(future::ok(()))
+    async fn mark_failure(&mut self, _: QueueItem) -> Result<(), StoreError> {
+        Err("hewwo".into())
     }
 
-    fn add(self, event: String, data: String) -> Self::MarkFuture {
-        Box::new(future::ok(()))
+    async fn add(&mut self, _: String, _: String) -> Result<(), StoreError> {
+        Err("hewwo".into())
     }
 }

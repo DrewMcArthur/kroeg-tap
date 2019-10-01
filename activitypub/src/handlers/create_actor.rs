@@ -1,21 +1,15 @@
 use jsonld::nodemap::{Entity, Pointer, Value};
-
-use serde_json::Value as JValue;
-
-use kroeg_tap::{assign_id, box_store_error, Context, EntityStore, MessageHandler, StoreItem};
-
 use openssl::rsa::Rsa;
+use serde_json::json;
+use serde_json::Value as JValue;
 use std::collections::HashMap;
 use std::error::Error;
 
-use futures::{
-    future::{self, Either},
-    stream, Future, Stream,
-};
+use kroeg_tap::{as2, assign_id, kroeg, ldp, sec, Context, MessageHandler, StoreItem};
 
 pub struct CreateActorHandler;
 
-fn create_key_obj(owner: &str) -> Result<StoreItem, Box<Error + Send + Sync + 'static>> {
+fn create_key_obj(owner: &str) -> Result<StoreItem, Box<dyn Error + Send + Sync + 'static>> {
     let id = format!("{}#public-key", owner);
     let key = Rsa::generate(2048)?;
 
@@ -47,7 +41,7 @@ fn create_key_obj(owner: &str) -> Result<StoreItem, Box<Error + Send + Sync + 's
 fn build_collection(id: &str, owned: &str, boxtype: Option<&str>, context: &Context) -> StoreItem {
     let mut item = StoreItem::parse(
         id,
-        json!({
+        &json!({
             "@id": id,
             "@type": [as2!(OrderedCollection)],
             as2!(partOf): [{"@id": owned}]
@@ -77,128 +71,77 @@ const COLLECTIONS: &'static [(&'static str, &'static str, Option<&'static str>)]
     ("liked", as2!(liked), None),
 ];
 
-fn add_all_collections<T: EntityStore>(
-    item: StoreItem,
-    store: T,
-    context: Context,
-) -> impl Future<Item = (Context, T, StoreItem), Error = (Box<Error + Send + Sync + 'static>, T)> {
-    stream::iter_ok(COLLECTIONS.iter())
-        .fold(
-            (item, store, context),
-            |(mut item, store, context), (typ, key, boxtype)| {
-                if item.main()[key].len() != 0 {
-                    return Either::A(future::err((
-                        format!("predicate {} already exists", key).into(),
-                        store,
-                    )));
-                }
+async fn add_all_collections(
+    context: &mut Context<'_, '_>,
+    item: &mut StoreItem,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    for (typ, key, boxtype) in COLLECTIONS {
+        if !item.main()[key].is_empty() {
+            return Err(format!("predicate {} already has value while creating user", key).into());
+        }
 
-                Either::B(
-                    assign_id(
-                        context,
-                        store,
-                        Some(typ.to_string()),
-                        Some(item.id().to_owned()),
-                        1,
-                    )
-                    .and_then(move |(context, store, collection_id)| {
-                        let collection =
-                            build_collection(&collection_id, item.id(), *boxtype, &context);
-
-                        item.main_mut()
-                            .get_mut(key)
-                            .push(Pointer::Id(collection_id.to_owned()));
-
-                        store
-                            .put(collection_id, collection)
-                            .map(move |(_, store)| (item, store, context))
-                    })
-                    .map_err(box_store_error),
-                )
-            },
+        let collection_id = assign_id(
+            context,
+            Some((*typ).to_owned()),
+            Some(item.id().to_owned()),
+            1,
         )
-        .and_then(|(mut item, store, context)| {
-            if item.main()[sec!(publicKey)].len() != 0 {
-                return Either::A(future::err((
-                    "predicate publicKey already exists".into(),
-                    store,
-                )));
-            }
+        .await?;
+        let mut collection = build_collection(&collection_id, item.id(), *boxtype, context);
+        item.main_mut()
+            .get_mut(key)
+            .push(Pointer::Id(collection_id.clone()));
 
-            let key = match create_key_obj(item.id()) {
-                Ok(key) => key,
-                Err(e) => return Either::A(future::err((e.into(), store))),
-            };
+        context
+            .entity_store
+            .put(collection_id, &mut collection)
+            .await?;
+    }
 
-            item.main_mut()[as2!(publicKey)].push(Pointer::Id(key.id().to_owned()));
+    if item.main()[sec!(publicKey)].len() != 0 {
+        return Err("predicate publicKey already has value while creating user".into());
+    }
 
-            Either::B(
-                store
-                    .put(key.id().to_owned(), key)
-                    .and_then(move |(_, store)| store.put(item.id().to_owned(), item))
-                    .map(|(item, store)| (context, store, item))
-                    .map_err(box_store_error),
-            )
-        })
+    let mut key = create_key_obj(item.id())?;
+
+    item.main_mut()[sec!(publicKey)].push(Pointer::Id(key.id().to_owned()));
+
+    context
+        .entity_store
+        .put(key.id().to_owned(), &mut key)
+        .await?;
+
+    context.entity_store.put(item.id().to_owned(), item).await
 }
 
-impl<T: EntityStore + 'static> MessageHandler<T> for CreateActorHandler {
-    fn handle(
+#[async_trait::async_trait]
+impl MessageHandler for CreateActorHandler {
+    async fn handle(
         &self,
-        context: Context,
-        store: T,
-        _inbox: String,
-        elem: String,
-    ) -> Box<
-        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)>
-            + Send
-            + 'static,
-    > {
-        let root = elem.to_owned();
-        Box::new(
-            store
-                .get(elem, false)
-                .map_err(box_store_error)
-                .and_then(move |(elem, store)| {
-                    let person_future = match elem {
-                        Some(elem) if elem.main().types.contains(&as2!(Person).to_owned()) => {
-                            Either::A(future::ok((Some(elem), store)))
-                        }
-                        Some(elem) if elem.main().types.contains(&as2!(Create).to_owned()) => {
-                            match &elem.main()[as2!(object)] as &[Pointer] {
-                                [Pointer::Id(obj)] => Either::B(
-                                    store.get(obj.to_owned(), false).map(|(item, store)| {
-                                        (
-                                            item.and_then(|f| {
-                                                if f.main().types.contains(&as2!(Person).to_owned())
-                                                {
-                                                    Some(f)
-                                                } else {
-                                                    None
-                                                }
-                                            }),
-                                            store,
-                                        )
-                                    }),
-                                ),
-                                _ => return Either::A(future::ok((context, store, root))),
-                            }
-                        }
+        context: &mut Context<'_, '_>,
+        _inbox: &mut String,
+        elem: &mut String,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let elem = match context.entity_store.get(elem.to_owned(), false).await? {
+            Some(elem) => elem,
+            None => return Ok(()),
+        };
 
-                        _ => return Either::A(future::ok((context, store, root))),
-                    }
-                    .map_err(box_store_error);
+        let mut person = if elem.main().types.iter().any(|f| f == as2!(Person)) {
+            elem
+        } else if elem.main().types.iter().any(|f| f == as2!(Create)) {
+            if let [Pointer::Id(obj)] = &elem.main()[as2!(object)] as &[Pointer] {
+                match context.entity_store.get(obj.to_owned(), false).await? {
+                    Some(item) if item.main().types.iter().any(|f| f == as2!(Person)) => item,
+                    _ => return Ok(()),
+                }
+            } else {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        };
 
-                    Either::B(person_future.and_then(move |(item, store)| {
-                        match item {
-                            Some(item) => Either::A(
-                                add_all_collections(item, store, context)
-                                    .map(move |(context, store, _)| (context, store, root)),
-                            ),
-                            None => Either::B(future::ok((context, store, root))),
-                        }
-                    }))
-                }),
-        )
+        add_all_collections(context, &mut person).await
     }
 }

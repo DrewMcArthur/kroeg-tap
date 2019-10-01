@@ -1,62 +1,39 @@
-use entity::StoreItem;
-use entitystore::EntityStore;
+use crate::entity::StoreItem;
+use crate::user::Context;
+
 use jsonld::nodemap::{Pointer, Value};
 use serde_json::Value as JValue;
-use user::Context;
+use std::error::Error;
 
-use futures::future;
-use futures::prelude::{await, *};
-
-pub trait Authorizer<T: EntityStore>: Send + Sync + 'static {
-    type Future: Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send;
-
-    fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future;
+#[async_trait::async_trait]
+pub trait Authorizer: Send + Sync + 'static {
+    async fn can_show(
+        &self,
+        context: &mut Context<'_, '_>,
+        entity: &StoreItem,
+    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>>;
 }
 
-impl<T: EntityStore> Authorizer<T> for () {
-    type Future = future::FutureResult<(T, bool), (T::Error, T)>;
-
-    fn can_show(&self, store: T, _: &StoreItem) -> Self::Future {
-        future::ok((store, true))
+#[async_trait::async_trait]
+impl Authorizer for () {
+    async fn can_show(
+        &self,
+        _: &mut Context<'_, '_>,
+        _: &StoreItem,
+    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
+        Ok(true)
     }
 }
 
-pub struct DefaultAuthorizer(String);
+pub struct DefaultAuthorizer;
 
-impl DefaultAuthorizer {
-    pub fn new(context: &Context) -> DefaultAuthorizer {
-        DefaultAuthorizer(context.user.subject.to_owned())
-    }
-}
-
-#[async(boxed_send)]
-fn recursive_verify<T: EntityStore>(
-    subject: String,
-    store: T,
-    ids: Vec<String>,
-) -> Result<(T, bool), (T::Error, T)> {
-    if ids.contains(&as2!(Public).to_string()) {
-        Ok((store, true))
-    } else if ids.contains(&subject) {
-        Ok((store, true))
-    } else {
-        let mut store = store;
-        for id in ids.into_iter() {
-            let (data, storeval) = await!(store.find_collection(id, subject.to_owned()))?;
-            store = storeval;
-            if data.items.len() != 0 {
-                return Ok((store, true));
-            }
-        }
-
-        Ok((store, false))
-    }
-}
-
-impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
-    type Future = Box<Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send>;
-
-    fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future {
+#[async_trait::async_trait]
+impl Authorizer for DefaultAuthorizer {
+    async fn can_show(
+        &self,
+        context: &mut Context<'_, '_>,
+        entity: &StoreItem,
+    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let mut audience = Vec::new();
         let mut has_non_actor = false;
         for item in &[
@@ -80,25 +57,43 @@ impl<T: EntityStore> Authorizer<T> for DefaultAuthorizer {
         }
 
         if !has_non_actor {
-            Box::new(future::ok((store, true)))
+            Ok(true)
+        } else if audience.contains(&as2!(Public).to_string())
+            || audience.contains(&context.user.subject)
+        {
+            Ok(true)
         } else {
-            recursive_verify(self.0.to_owned(), store, audience)
+            for id in audience {
+                let data = context
+                    .entity_store
+                    .find_collection(id, context.user.subject.clone())
+                    .await?;
+
+                if !data.items.is_empty() {
+                    return Ok(true);
+                }
+            }
+
+            Ok(false)
         }
     }
 }
 
-pub struct LocalOnlyAuthorizer<R: Send + Sync + 'static>(u32, R);
+pub struct LocalOnlyAuthorizer<R>(R);
 
-impl<R: Send + Sync + 'static> LocalOnlyAuthorizer<R> {
-    pub fn new(context: &Context, authorizer: R) -> LocalOnlyAuthorizer<R> {
-        LocalOnlyAuthorizer(context.instance_id, authorizer)
+impl<R: Authorizer> LocalOnlyAuthorizer<R> {
+    pub fn new(authorizer: R) -> LocalOnlyAuthorizer<R> {
+        LocalOnlyAuthorizer(authorizer)
     }
 }
 
-impl<T: EntityStore, R: Authorizer<T>> Authorizer<T> for LocalOnlyAuthorizer<R> {
-    type Future = Box<Future<Item = (T, bool), Error = (T::Error, T)> + 'static + Send>;
-
-    fn can_show(&self, store: T, entity: &StoreItem) -> Self::Future {
+#[async_trait::async_trait]
+impl<R: Authorizer> Authorizer for LocalOnlyAuthorizer<R> {
+    async fn can_show(
+        &self,
+        context: &mut Context<'_, '_>,
+        entity: &StoreItem,
+    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let is_local = match entity
             .sub(kroeg!(meta))
             .and_then(|f| f[kroeg!(instance)].get(0))
@@ -106,14 +101,17 @@ impl<T: EntityStore, R: Authorizer<T>> Authorizer<T> for LocalOnlyAuthorizer<R> 
             Some(Pointer::Value(Value {
                 value: JValue::Number(num),
                 ..
-            })) => num.as_u64().map(|f| f == self.0 as u64).unwrap_or(false),
+            })) => num
+                .as_u64()
+                .map(|f| f == context.instance_id as u64)
+                .unwrap_or(false),
             _ => false,
         };
 
         if !is_local {
-            Box::new(future::ok((store, false)))
+            Ok(false)
         } else {
-            Box::new(self.1.can_show(store, entity))
+            self.0.can_show(context, entity).await
         }
     }
 }

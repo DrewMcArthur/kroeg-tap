@@ -1,24 +1,24 @@
-use futures::prelude::{await, *};
-
-use serde_json::Value as JValue;
-
-use super::entity::StoreItem;
-use super::entitystore::EntityStore;
-use super::user::Context;
 use jsonld::nodemap::{Entity, Pointer, Value};
-
 use rand::{thread_rng, Rng};
+use serde_json::Value as JValue;
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use crate::entity::StoreItem;
+use crate::entitystore::StoreError;
+use crate::user::Context;
 
 const ALPHABET: [char; 32] = [
     'y', 'b', 'n', 'd', 'r', 'f', 'g', '8', 'e', 'j', 'k', 'm', 'c', 'p', 'q', 'x', 'o', 't', '1',
     'u', 'w', 'i', 's', 'z', 'a', '3', '4', '5', 'h', '7', '6', '9',
 ];
 
+/// Generates a random suggestion for en entity to use when the suggested
+///  name is not available anymore.
 pub fn get_suggestion(depth: u32) -> String {
     let mut data: [u8; 8] = [0; 8];
 
     thread_rng().fill(&mut data);
+
     let data: String = data
         .iter()
         .map(|f| ALPHABET[(*f & 0b11111) as usize])
@@ -107,24 +107,25 @@ fn _remap(
     data: &HashMap<String, String>,
     outgoing_ids: &mut HashSet<String>,
 ) {
-    for (_, mut value) in entity.iter_mut() {
+    for (_, value) in entity.iter_mut() {
         _remap_arr(context, value, data, outgoing_ids);
     }
 }
 
-#[async]
-pub fn assign_ids<T: EntityStore>(
-    mut context: Context,
-    mut store: T,
+/// Assigns new IDs to a map of StoreItems, ensuring they do not conflict
+///  in the EntityStore.
+pub async fn assign_ids(
+    context: &mut Context<'_, '_>,
     parent: Option<String>,
-    data: HashMap<String, StoreItem>,
+    data_out: &mut HashMap<String, StoreItem>,
     root: Option<String>,
-) -> Result<(Context, T, Option<String>, HashMap<String, StoreItem>), (T::Error, T)> {
-    let mut out = HashMap::new();
+) -> Result<Option<String>, StoreError> {
     let mut remap = HashMap::new();
 
-    let data = data.into_iter().collect::<BTreeMap<_, _>>(); // use the topologically assigned blank nodes.
-    let root = root.or_else(|| data.iter().map(|(v, _)| v.to_owned()).next());
+    let data = std::mem::replace(data_out, HashMap::new())
+        .into_iter()
+        .collect::<BTreeMap<_, _>>(); // use the topologically assigned blank nodes.
+    let root = root.or_else(|| data.iter().map(|(v, _)| (*v).to_owned()).next());
 
     let mut graph: HashMap<String, (Option<String>, u32)> = HashMap::new();
 
@@ -133,15 +134,12 @@ pub fn assign_ids<T: EntityStore>(
         let mut suggestion = shortname_suggestion(value.main());
 
         let new_id = loop {
-            let (context_val, store_val, new_id) =
-                await!(assign_id(context, store, suggestion, parent.clone(), depth))?;
-            context = context_val;
-            store = store_val;
+            let new_id = assign_id(context, suggestion, parent.clone(), depth).await?;
             suggestion = None;
 
             // assign_id verifies that IDs do not conflict in the store, but these objects don't exist
             // in the store yet. Manually check them.
-            if !out.contains_key(&new_id) {
+            if !data_out.contains_key(&new_id) {
                 break new_id;
             }
         };
@@ -173,29 +171,25 @@ pub fn assign_ids<T: EntityStore>(
             }));
 
         remap.insert(id, new_id.to_owned());
-        out.insert(new_id, value);
+        data_out.insert(new_id, value);
     }
 
-    for (_, ref mut value) in out.iter_mut() {
+    for (_, ref mut value) in data_out.iter_mut() {
         _remap(&context, value.main_mut(), &remap, &mut HashSet::new());
     }
 
-    Ok((
-        context,
-        store,
-        root.and_then(|f| remap.get(&f).cloned()),
-        out,
-    ))
+    Ok(root.and_then(|f| remap.get(&f).cloned()))
 }
 
-#[async]
-pub fn assign_id<T: EntityStore>(
-    context: Context,
-    store: T,
+/// Finds a valid unused ID for an entity, based on an arbitrary
+///  suggestion, the parent ID of the entity, and the amount of ancestors
+///  of this entitiy.
+pub async fn assign_id(
+    context: &mut Context<'_, '_>,
     suggestion: Option<String>,
     parent: Option<String>,
     depth: u32,
-) -> Result<(Context, T, String), (T::Error, T)> {
+) -> Result<String, StoreError> {
     let parent = parent.unwrap_or(context.server_base.to_owned());
     let suggestion = suggestion.unwrap_or(get_suggestion(depth));
 
@@ -205,9 +199,10 @@ pub fn assign_id<T: EntityStore>(
         if parent.ends_with("/") { "" } else { "/" },
         suggestion
     );
-    let (test, mut store) = await!(store.get(preliminary.to_owned(), false))?;
+
+    let test = context.entity_store.get(preliminary.clone(), false).await?;
     if test.is_none() {
-        return Ok((context, store, preliminary));
+        return Ok(preliminary);
     }
 
     for _ in 1isize..3isize {
@@ -218,11 +213,13 @@ pub fn assign_id<T: EntityStore>(
             if parent.ends_with("/") { "" } else { "/" },
             suggestion
         );
-        let (test, storeval) = await!(store.get(preliminary.to_owned(), false))?;
-        store = storeval;
+        let test = context
+            .entity_store
+            .get(preliminary.to_owned(), false)
+            .await?;
 
         if test.is_none() {
-            return Ok((context, store, preliminary));
+            return Ok(preliminary);
         }
     }
 

@@ -2,11 +2,15 @@
 name = "kroeg-tap-activitypub"
 version = "0.1.0"
 authors = ["Puck Meerburg <puck@puckipedia.com>"]
+edition = "2018"
 
 [dependencies]
 serde_json = "1.0"
 jsonld = { path = "../../jsonld-rs" }
 kroeg-tap = { path = "../tap" }
-futures-await = "0.1"
+async-trait = "0.1.13"
 openssl = "0.10"
 url = "1.7"
+
+[dev-dependencies]
+async-std = "0.99"

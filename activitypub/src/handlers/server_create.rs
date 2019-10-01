@@ -1,14 +1,8 @@
 use jsonld::nodemap::Pointer;
-
-use kroeg_tap::{box_store_error, Context, EntityStore, MessageHandler};
-
 use std::error::Error;
 use std::fmt;
 
-use futures::{
-    future::{self, Either},
-    stream, Future, Stream,
-};
+use kroeg_tap::{as2, Context, MessageHandler};
 
 #[derive(Debug)]
 pub enum ServerCreateError {
@@ -28,101 +22,61 @@ impl fmt::Display for ServerCreateError {
     }
 }
 
-impl Error for ServerCreateError {
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
+impl Error for ServerCreateError {}
 
 pub struct ServerCreateHandler;
 
-impl<T: EntityStore + 'static> MessageHandler<T> for ServerCreateHandler {
-    fn handle(
+#[async_trait::async_trait]
+impl MessageHandler for ServerCreateHandler {
+    async fn handle(
         &self,
-        context: Context,
-        store: T,
-        _inbox: String,
-        elem: String,
-    ) -> Box<
-        Future<Item = (Context, T, String), Error = (Box<Error + Send + Sync + 'static>, T)>
-            + Send
-            + 'static,
-    > {
-        let root = elem.to_owned();
-        Box::new(
-            store
-                .get(elem, false)
-                .map_err(box_store_error)
-                .and_then(|(val, store)| match val {
-                    Some(val) if val.main().types.contains(&as2!(Create).to_owned()) => {
-                        let id = match &val.main()[as2!(object)] as &[Pointer] {
-                            [Pointer::Id(id)] => id.to_owned(),
-                            _ => {
-                                return Either::A(future::err((
-                                    ServerCreateError::MissingObject.into(),
-                                    store,
-                                )));
-                            }
-                        };
+        context: &mut Context<'_, '_>,
+        _inbox: &mut String,
+        elem: &mut String,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let root = match context.entity_store.get(elem.to_owned(), false).await? {
+            Some(root) => root,
+            None => return Ok(()),
+        };
 
-                        Either::B(store.get(id, false).map_err(box_store_error).and_then(
-                            |(val, store)| {
-                                match val {
-                                    Some(val) => future::ok((
-                                        val.main()[as2!(inReplyTo)]
-                                            .iter()
-                                            .filter_map(|f| {
-                                                if let Pointer::Id(id) = f {
-                                                    Some(id.to_owned())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect(),
-                                        store,
-                                        val.id().to_owned(),
-                                    )),
-                                    None => future::err((
-                                        ServerCreateError::FailedToRetrieve.into(),
-                                        store,
-                                    )),
-                                }
-                            },
-                        ))
+        if !root.main().types.iter().any(|f| f == as2!(Create)) {
+            return Ok(());
+        }
+
+        for pointer in &root.main()[as2!(object)] {
+            if let Pointer::Id(id) = pointer {
+                let object = context
+                    .entity_store
+                    .get(id.to_owned(), false)
+                    .await?
+                    .ok_or(ServerCreateError::FailedToRetrieve)?;
+
+                for item in &object.main()[as2!(inReplyTo)] {
+                    let id = if let Pointer::Id(id) = item {
+                        id.to_owned()
+                    } else {
+                        continue;
+                    };
+
+                    if let Some(replied) = context.entity_store.get(id, true).await? {
+                        if !replied.is_owned(&context) {
+                            continue;
+                        }
+
+                        if let [Pointer::Id(id)] = &replied.main()[as2!(replies)] as &[Pointer] {
+                            context
+                                .entity_store
+                                .insert_collection(id.to_owned(), object.id().to_owned())
+                                .await?;
+                        }
                     }
-                    Some(val) => Either::A(future::ok((vec![], store, val.id().to_owned()))),
-                    None => Either::A(future::err((
-                        ServerCreateError::FailedToRetrieve.into(),
-                        store,
-                    ))),
-                })
-                .and_then(|(items, store, elem)| {
-                    stream::iter_ok(items)
-                        .fold((context, store, elem), |(context, store, elem), item| {
-                            store
-                                .get(item, true)
-                                .and_then(move |(item, store)| match item {
-                                    Some(item) if item.is_owned(&context) => {
-                                        match &item.main()[as2!(replies)] as &[Pointer] {
-                                            [Pointer::Id(id)] => Either::A(
-                                                store
-                                                    .insert_collection(
-                                                        id.to_owned(),
-                                                        elem.to_owned(),
-                                                    )
-                                                    .map(move |store| (context, store, elem)),
-                                            ),
-                                            _ => Either::B(future::ok((context, store, elem))),
-                                        }
-                                    }
+                }
+            } else {
+                return Err(ServerCreateError::MissingObject.into());
+            }
+        }
 
-                                    _ => Either::B(future::ok((context, store, elem))),
-                                })
-                        })
-                        .map(|(context, store, _)| (context, store, root))
-                        .map_err(box_store_error)
-                }),
-        )
+        Ok(())
     }
 }
 
@@ -131,39 +85,45 @@ mod test {
     use super::{ServerCreateError, ServerCreateHandler};
     use crate::test::TestStore;
     use crate::{handle_object_pair, object_under_test};
-    use futures::Async;
+    use async_std::task::block_on;
     use jsonld::nodemap::Entity;
-    use kroeg_tap::{Context, MessageHandler};
+    use kroeg_tap::{as2, MessageHandler};
 
-    fn setup() -> (Context, TestStore) {
-        TestStore::new(vec![
-            object_under_test!(remote "/like" => {
-                types => [as2!(Like)];
-                as2!(object) => ["/object"];
-            }),
-            object_under_test!(local "/local" => {
-                types => [as2!(Note)];
-                as2!(replies) => ["/replies"];
-            }),
-            object_under_test!(local "/local/create" => {
-                types => [as2!(Create)];
-                as2!(object) => ["/local/object"];
-            }),
-            object_under_test!(local "/local/object" => {
-                types => [as2!(Note)];
-                as2!(inReplyTo) => ["/local"];
-            }),
-        ])
+    fn setup() -> (TestStore, ()) {
+        (
+            TestStore::new(vec![
+                object_under_test!(remote "/like" => {
+                    types => [as2!(Like)];
+                    as2!(object) => ["/object"];
+                }),
+                object_under_test!(local "/local" => {
+                    types => [as2!(Note)];
+                    as2!(replies) => ["/replies"];
+                }),
+                object_under_test!(local "/local/create" => {
+                    types => [as2!(Create)];
+                    as2!(object) => ["/local/object"];
+                }),
+                object_under_test!(local "/local/object" => {
+                    types => [as2!(Note)];
+                    as2!(inReplyTo) => ["/local"];
+                }),
+            ]),
+            (),
+        )
     }
 
     #[test]
     fn ignores_non_create() {
-        let (context, store) = setup();
-        match ServerCreateHandler
-            .handle(context, store, "/inbox".to_owned(), "/like".to_owned())
-            .poll()
-        {
-            Ok(Async::Ready((context, store, elem))) => {
+        let (mut store, mut queue) = setup();
+        let mut context = store.context(&mut queue);
+
+        match block_on(ServerCreateHandler.handle(
+            &mut context,
+            &mut "/inbox".to_owned(),
+            &mut "/like".to_owned(),
+        )) {
+            Ok(()) => {
                 assert!(
                     store.has_read("/like"),
                     "Handler did not read the root object"
@@ -173,24 +133,21 @@ mod test {
                     "Handler attempted to process the Like"
                 );
             }
-            Err((e, _)) => panic!("handler returned error: {}", e),
-            _ => unreachable!(),
+            Err(e) => panic!("handler returned error: {}", e),
         }
     }
 
     #[test]
     fn handles_local_object() {
-        let (context, store) = setup();
-        match ServerCreateHandler
-            .handle(
-                context,
-                store,
-                "/inbox".to_owned(),
-                "/local/create".to_owned(),
-            )
-            .poll()
-        {
-            Ok(Async::Ready((context, store, elem))) => {
+        let (mut store, mut queue) = setup();
+        let mut context = store.context(&mut queue);
+
+        match block_on(ServerCreateHandler.handle(
+            &mut context,
+            &mut "/inbox".to_owned(),
+            &mut "/local/create".to_owned(),
+        )) {
+            Ok(()) => {
                 assert!(
                     store.has_read_all(&["/local/create", "/local/object", "/local"]),
                     "Handler did not read all objects"
@@ -200,8 +157,7 @@ mod test {
                     "Reply has not been recorded properly"
                 );
             }
-            Err((e, _)) => panic!("handler returned error: {}", e),
-            _ => unreachable!(),
+            Err(e) => panic!("handler returned error: {}", e),
         }
     }
 }

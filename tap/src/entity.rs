@@ -3,13 +3,11 @@
 //! They define a set of structs that translate the most important subset of JSON-LD
 //! in a way that is easier to process, by removing lots of JSON boilerplate.
 
+use jsonld::nodemap::{generate_node_map, BlankNodeGenerator, Entity, NodeMapError, Pointer};
 use serde_json::Value as JValue;
-
 use std::collections::HashMap;
 
-use jsonld::nodemap::{generate_node_map, BlankNodeGenerator, Entity, NodeMapError, Pointer};
-
-use super::user::Context;
+use crate::user::Context;
 
 #[derive(Clone, Debug)]
 /// A result from an `EntityStore` response, containing a `main` ID and a map of `sub`
@@ -116,7 +114,7 @@ impl StoreItem {
     pub fn to_json(self) -> JValue {
         let mut vec = Vec::new();
         for (_, v) in self.data {
-            vec.push(v.to_json());
+            vec.push(v.into_json());
         }
 
         JValue::Array(vec)
@@ -143,7 +141,7 @@ impl StoreItem {
     ///
     /// The `main` property is used to store the main object, it should be
     /// the only non-blank node in the map.
-    pub fn parse(main: &str, entity: JValue) -> Result<StoreItem, NodeMapError> {
+    pub fn parse(main: &str, entity: &JValue) -> Result<StoreItem, NodeMapError> {
         let mut node_map = generate_node_map(entity, &mut StoreItemNodeGenerator::new())?
             .remove("@default")
             .unwrap();
