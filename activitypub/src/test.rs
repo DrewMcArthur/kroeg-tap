@@ -126,6 +126,8 @@ impl TestStore {
             },
 
             server_base: "".to_owned(),
+            name: String::new(),
+            description: String::new(),
             instance_id: 1,
             entity_store: self,
             queue_store: queue,
