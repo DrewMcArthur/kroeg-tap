@@ -10,6 +10,12 @@ pub struct Context<'a, 'b> {
     /// The base URI of the server, e.g. `https://example.com`
     pub server_base: String,
 
+    /// The name of this server.
+    pub name: String,
+
+    /// The description of this server.
+    pub description: String,
+
     /// The entity store used for this request.
     pub entity_store: &'a mut dyn EntityStore,
 
