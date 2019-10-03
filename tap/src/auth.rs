@@ -12,6 +12,8 @@ pub trait Authorizer: Send + Sync + 'static {
         context: &mut Context<'_, '_>,
         entity: &StoreItem,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>>;
+
+    fn can_replace(&self, old: &StoreItem, new: &StoreItem) -> bool;
 }
 
 #[async_trait::async_trait]
@@ -22,6 +24,10 @@ impl Authorizer for () {
         _: &StoreItem,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         Ok(true)
+    }
+
+    fn can_replace(&self, _: &StoreItem, _: &StoreItem) -> bool {
+        true
     }
 }
 
@@ -77,6 +83,40 @@ impl Authorizer for DefaultAuthorizer {
             Ok(false)
         }
     }
+
+    fn can_replace(&self, old: &StoreItem, new: &StoreItem) -> bool {
+        if old.main().types.iter().any(|f| f == as2!(Tombstone)) {
+            return false;
+        }
+
+        if new.main().types.iter().any(|f| f == as2!(Tombstone)) {
+            return true;
+        }
+
+        // Cannot make an unowned object owned or inverse.
+        if old.sub(kroeg!(meta)).map(|f| &f[kroeg!(instance)])
+            != new.sub(kroeg!(meta)).map(|f| &f[kroeg!(instance)])
+        {
+            return false;
+        }
+
+        // Checking that the actor, attributedTo, and object do not change is good
+        //  enough to protect against impersonation vulnerabilities.
+        //
+        // (Though, note, getting an impersonated object *into* the database requires
+        //  a malicious server or any other origin takeover vulnerability currently.)
+        for to_check in &[as2!(actor), as2!(attributedTo), as2!(object)] {
+            if old.main()[to_check] != new.main()[to_check] {
+                return false;
+            }
+        }
+
+        if &old.main()[as2!(actor)] != &new.main()[as2!(actor)] {
+            return false;
+        }
+
+        true
+    }
 }
 
 pub struct LocalOnlyAuthorizer<R>(R);
@@ -113,5 +153,9 @@ impl<R: Authorizer> Authorizer for LocalOnlyAuthorizer<R> {
         } else {
             self.0.can_show(context, entity).await
         }
+    }
+
+    fn can_replace(&self, old: &StoreItem, new: &StoreItem) -> bool {
+        self.0.can_replace(old, new)
     }
 }
