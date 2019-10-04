@@ -222,6 +222,7 @@ pub async fn assemble<R: Authorizer>(
     _assemble(main, depth, context, &item.data, authorizer, seen).await
 }
 
+// Finds all the IDs referenced in the tangle.
 fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {
     for value in data {
         match value {
@@ -232,6 +233,7 @@ fn _untangle_vec(data: &Vec<Pointer>, tangles: &mut Vec<String>) {
     }
 }
 
+// Renames every ID in the data according to the mapping.
 fn _rename_vec(map: &HashMap<String, String>, data: &mut Vec<Pointer>) {
     for value in data {
         match value {
@@ -254,8 +256,6 @@ fn find_non_blank<'a>(
     edges: &mut HashSet<(&'a String, &'a String)>,
 ) -> Option<&'a String> {
     for (i, val) in map {
-        let i = translation.get(i).unwrap_or(i);
-
         if edges.contains(&(i, item)) {
             continue;
         }
@@ -277,7 +277,7 @@ fn find_non_blank<'a>(
 }
 
 pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapError> {
-    // Build a node map, aka a flattened json-ld graph.
+    // Build a node map, aka a flattened JSON-LD graph.
     let mut flattened =
         match generate_node_map(data, &mut DefaultNodeGenerator::new())?.remove("@default") {
             Some(val) => val,
@@ -292,7 +292,7 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
 
     // do a boneless topological sort
     for (key, item) in flattened.iter() {
-        // Build a Vec<String> of all the outgoing edges.
+        // Build a Vec<String> of all the outgoing edges of this subject.
         let mut outgoing_edges = Vec::new();
         for (_, values) in item.iter() {
             _untangle_vec(values, &mut outgoing_edges);
@@ -322,8 +322,10 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
         outgoing_edge_map.insert(key.to_owned(), outgoing_edges);
     }
 
+    // Build up the ordering to process the items in.
     let mut tangle_order = vec![];
 
+    // Take all subjects that have no incoming edges.
     while let Some(key) = incoming_edge_map
         .iter()
         .filter(|(_, a)| a.is_empty())
@@ -331,6 +333,8 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
         .next()
     {
         incoming_edge_map.remove(&key);
+
+        // Remove all outgoing edges of this subject.
         if let Some(edges) = outgoing_edge_map.get(&key) {
             for edge in edges {
                 incoming_edge_map.get_mut(edge).map(|f| f.remove(&key));
@@ -340,6 +344,7 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
         tangle_order.push(key);
     }
 
+    // These subjects have circular dependencies, add them in arbitrary order.
     for (k, _) in incoming_edge_map {
         if outgoing_edge_map.contains_key(&k) {
             tangle_order.push(k);
@@ -348,6 +353,7 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
 
     let mut rewrite_id = HashMap::new();
 
+    // Now we need to rewrite all IDs.
     for id in tangle_order {
         if !id.starts_with("_:") || rewrite_id.contains_key(&id) {
             continue;
@@ -357,7 +363,6 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
             find_non_blank(&outgoing_edge_map, &id, &rewrite_id, &mut HashSet::new()).cloned()
         {
             // woo! this object is rooted in another object! record it as _:https://example.com/object:b1
-
             let i = rewrite_id.len();
             if value.starts_with("_:") {
                 rewrite_id.insert(id, format!("{}:b{}", value, i));
@@ -368,7 +373,6 @@ pub fn untangle(data: &JValue) -> Result<HashMap<String, StoreItem>, NodeMapErro
             // _:unrooted:1234-5678-1234-5678-1234-5678:b0
             // should be random enough??? maybe pass in outside context (e.g. id??)
             // eh whatever.
-
             let i = rewrite_id.len();
             rewrite_id.insert(
                 id,
