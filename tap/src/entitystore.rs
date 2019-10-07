@@ -4,6 +4,8 @@ use crate::entity::StoreItem;
 
 use std::error::Error;
 use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::QuadQuery;
 
@@ -56,6 +58,96 @@ pub trait EntityStore: Debug + Send {
     async fn remove_collection(&mut self, path: String, item: String) -> Result<(), StoreError>;
 }
 
+// Manually implement async_trait to save an indirection; this will hopefully be inlined.
+impl EntityStore for &mut dyn EntityStore {
+    fn get<'a: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        local: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<StoreItem>, StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).get(path, local)
+    }
+
+    fn put<'a: 'res, 'b: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        item: &'b mut StoreItem,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).put(path, item)
+    }
+
+    fn query<'a: 'res, 'res>(
+        &'a mut self,
+        query: Vec<QuadQuery>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<String>>, StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).query(query)
+    }
+
+    fn read_collection<'a: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        count: Option<u32>,
+        cursor: Option<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<CollectionPointer, StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).read_collection(path, count, cursor)
+    }
+
+    fn find_collection<'a: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        item: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CollectionPointer, StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).find_collection(path, item)
+    }
+
+    fn insert_collection<'a: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        item: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).insert_collection(path, item)
+    }
+
+    fn read_collection_inverse<'a: 'res, 'res>(
+        &'a mut self,
+        item: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CollectionPointer, StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).read_collection_inverse(item)
+    }
+
+    fn remove_collection<'a: 'res, 'res>(
+        &'a mut self,
+        path: String,
+        item: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>>
+    where
+        Self: 'res,
+    {
+        (**self).remove_collection(path, item)
+    }
+}
+
 #[derive(Debug)]
 pub struct CollectionPointer {
     pub items: Vec<String>,
@@ -79,6 +171,36 @@ pub trait QueueStore: Debug + Send {
     async fn mark_failure(&mut self, item: QueueItem) -> Result<(), StoreError>;
 
     async fn add(&mut self, event: String, data: String) -> Result<(), StoreError>;
+}
+
+impl QueueStore for &mut dyn QueueStore {
+    fn get_item<'a: 'res, 'res>(
+        &'a mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<QueueItem>, StoreError>> + Send + 'res>> {
+        (**self).get_item()
+    }
+
+    fn mark_success<'a: 'res, 'res>(
+        &'a mut self,
+        item: QueueItem,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>> {
+        (**self).mark_success(item)
+    }
+
+    fn mark_failure<'a: 'res, 'res>(
+        &'a mut self,
+        item: QueueItem,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>> {
+        (**self).mark_failure(item)
+    }
+
+    fn add<'a: 'res, 'res>(
+        &'a mut self,
+        event: String,
+        data: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'res>> {
+        (**self).add(event, data)
+    }
 }
 
 #[async_trait::async_trait]
