@@ -31,7 +31,7 @@ impl MessageHandler for ServerCreateHandler {
     async fn handle(
         &self,
         context: &mut Context<'_, '_>,
-        _inbox: &mut String,
+        inbox: &mut String,
         elem: &mut String,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let root = match context.entity_store.get(elem.to_owned(), false).await? {
@@ -40,6 +40,17 @@ impl MessageHandler for ServerCreateHandler {
         };
 
         if !root.main().types.iter().any(|f| f == as2!(Create)) {
+            return Ok(());
+        }
+
+        let inbox = context
+            .entity_store
+            .get(inbox.to_owned(), true)
+            .await?
+            .unwrap();
+        let attributed_to = &inbox.main()[as2!(attributedTo)];
+
+        if attributed_to.is_empty() {
             return Ok(());
         }
 
@@ -63,6 +74,11 @@ impl MessageHandler for ServerCreateHandler {
                             continue;
                         }
 
+                        // Ensure replies only get processed iff the user themselves gets the activity.
+                        if &replied.main()[as2!(attributedTo)] != attributed_to {
+                            continue;
+                        }
+
                         if let [Pointer::Id(id)] = &replied.main()[as2!(replies)] as &[Pointer] {
                             context
                                 .entity_store
@@ -82,11 +98,10 @@ impl MessageHandler for ServerCreateHandler {
 
 #[cfg(test)]
 mod test {
-    use super::{ServerCreateError, ServerCreateHandler};
+    use super::ServerCreateHandler;
     use crate::test::TestStore;
     use crate::{handle_object_pair, object_under_test};
     use async_std::task::block_on;
-    use jsonld::nodemap::Entity;
     use kroeg_tap::{as2, MessageHandler};
 
     fn setup() -> (TestStore, ()) {
@@ -96,9 +111,14 @@ mod test {
                     types => [as2!(Like)];
                     as2!(object) => ["/object"];
                 }),
+                object_under_test!(local "/inbox" => {
+                    types => [as2!(OrderedCollection)];
+                    as2!(attributedTo) => ["/actor"];
+                }),
                 object_under_test!(local "/local" => {
                     types => [as2!(Note)];
                     as2!(replies) => ["/replies"];
+                    as2!(attributedTo) => ["/actor"];
                 }),
                 object_under_test!(local "/local/create" => {
                     types => [as2!(Create)];

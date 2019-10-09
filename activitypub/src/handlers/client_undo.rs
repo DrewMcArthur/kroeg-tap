@@ -97,10 +97,57 @@ impl MessageHandler for ClientUndoHandler {
         }
 
         if undone.main().types.iter().any(|f| f == &as2!(Follow)) {
-            if let [Pointer::Id(followed)] = &subject.main()[as2!(followed)] as &[Pointer] {
+            if let [Pointer::Id(followed)] = &subject.main()[as2!(following)] as &[Pointer] {
                 context
                     .entity_store
                     .remove_collection(followed.to_owned(), undone.id().to_owned())
+                    .await?;
+            }
+        }
+
+        if undone.main().types.iter().any(|f| f == &as2!(Accept)) {
+            let followers = match &subject.main()[as2!(followers)] as &[_] {
+                [Pointer::Id(followers)] => followers,
+                _ => return Ok(()),
+            };
+
+            for item in &undone.main()[as2!(object)] as &[_] {
+                let item = if let Pointer::Id(follow) = item {
+                    follow
+                } else {
+                    continue;
+                };
+
+                let mut item = match context.entity_store.get(item.to_owned(), true).await? {
+                    Some(item) => item,
+                    None => continue,
+                };
+
+                if !item.is_owned(context) || !item.meta()[as2!(Reject)].is_empty() {
+                    continue;
+                }
+
+                if !item.main().types.iter().any(|f| f == &as2!(Follow)) {
+                    continue;
+                }
+
+                for person in &item.main()[as2!(object)] {
+                    let person = match person {
+                        Pointer::Id(person) => person,
+                        _ => continue,
+                    };
+
+                    context
+                        .entity_store
+                        .remove_collection(followers.to_owned(), person.to_owned())
+                        .await?;
+                }
+
+                item.meta()[as2!(Reject)].push(Pointer::Id(elem.id().to_owned()));
+
+                context
+                    .entity_store
+                    .put(item.id().to_owned(), &mut item)
                     .await?;
             }
         }

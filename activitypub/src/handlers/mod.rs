@@ -1,31 +1,39 @@
-// Both C2S and S2S, verifies base constraints
+// Shared handler between outbox, inbox, and sharedInbox.
 mod verify_required;
 pub use self::verify_required::*;
 
-// C2S, handles {type: Create, object: {type: Person}}
-mod create_actor;
-pub use self::create_actor::*;
+// --- Outbox only: ---
 
-// C2S, handles objects that aren't activities.
+// Handles wrapping non-activities with a Create activity.
 mod auto_create;
 pub use self::auto_create::*;
 
-// C2S, adds likes/shares/replies collections to objects that are in a Create.
+// Handles creating an actor.
+mod create_actor;
+pub use self::create_actor::*;
+
+// Adds likes/shares/replies collections to `Create`d objects..
 mod client_create;
 pub use self::client_create::*;
 
-// C2S, adds liked objects to their `liked` collection.
+// Adds liked objects to their `liked` collection.
 mod client_like;
 pub use self::client_like::*;
 
-// C2S, undoes Like/Follow
+// Undoes Like/Follow/Accept
 mod client_undo;
 pub use self::client_undo::*;
 
-// S2S, adds reply to owned inReplyTo objects
+// --- Inbox only: ---
+
+// Adds object to replies if inReplyTo is an owned object.
 mod server_create;
 pub use self::server_create::*;
 
-// S2S, records like on owned objects
+// Adds object to likes and/or shares if object being liked/announced is owned.
 mod server_like;
 pub use self::server_like::*;
+
+// Handles follows, and their accept/rejects.
+mod server_follow;
+pub use self::server_follow::*;

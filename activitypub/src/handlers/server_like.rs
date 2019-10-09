@@ -10,7 +10,7 @@ impl MessageHandler for ServerLikeHandler {
     async fn handle(
         &self,
         context: &mut Context<'_, '_>,
-        _inbox: &mut String,
+        inbox: &mut String,
         elem: &mut String,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let root = match context.entity_store.get(elem.to_owned(), false).await? {
@@ -18,7 +18,21 @@ impl MessageHandler for ServerLikeHandler {
             None => return Ok(()),
         };
 
-        if !root.main().types.iter().any(|f| f == as2!(Like)) {
+        let is_like = root.main().types.iter().any(|f| f == as2!(Like));
+        let is_announce = root.main().types.iter().any(|f| f == as2!(Announce));
+
+        if !is_like && !is_announce {
+            return Ok(());
+        }
+
+        let inbox = context
+            .entity_store
+            .get(inbox.to_owned(), true)
+            .await?
+            .unwrap();
+        let attributed_to = &inbox.main()[as2!(attributedTo)];
+
+        if attributed_to.is_empty() {
             return Ok(());
         }
 
@@ -28,16 +42,32 @@ impl MessageHandler for ServerLikeHandler {
             } else {
                 continue;
             };
-            if let Some(liked) = context.entity_store.get(id, false).await? {
-                if !liked.is_owned(&context) {
+            if let Some(object) = context.entity_store.get(id, false).await? {
+                if !object.is_owned(&context) {
                     continue;
                 }
 
-                if let [Pointer::Id(collection)] = &liked.main()[as2!(likes)] as &[Pointer] {
-                    context
-                        .entity_store
-                        .insert_collection(collection.to_owned(), elem.to_owned())
-                        .await?;
+                // Ensure that likes only apply iff received by the user themselves.
+                if &object.main()[as2!(attributedTo)] != attributed_to {
+                    continue;
+                }
+
+                if is_like {
+                    if let [Pointer::Id(collection)] = &object.main()[as2!(likes)] as &[Pointer] {
+                        context
+                            .entity_store
+                            .insert_collection(collection.to_owned(), elem.to_owned())
+                            .await?;
+                    }
+                }
+
+                if is_announce {
+                    if let [Pointer::Id(collection)] = &object.main()[as2!(shares)] as &[Pointer] {
+                        context
+                            .entity_store
+                            .insert_collection(collection.to_owned(), elem.to_owned())
+                            .await?;
+                    }
                 }
             }
         }
@@ -69,13 +99,21 @@ mod test {
                     types => [as2!(Announce)];
                     as2!(object) => ["/object_a"];
                 }),
+                object_under_test!(local "/inbox" => {
+                    types => [as2!(OrderedCollection)];
+                    as2!(attributedTo) => ["/actor"];
+                }),
                 object_under_test!(local "/object_a" => {
                     types => [as2!(Note)];
                     as2!(likes) => ["/object_a/likes"];
+                    as2!(shares) => ["/object_a/shares"];
+                    as2!(attributedTo) => ["/actor"];
                 }),
                 object_under_test!(remote "/object_b" => {
                     types => [as2!(Note)];
                     as2!(likes) => ["/object_b/likes"];
+                    as2!(shares) => ["/object_b/shares"];
+                    as2!(attributedTo) => ["/actor"];
                 }),
             ]),
             (),
@@ -131,7 +169,7 @@ mod test {
     }
 
     #[test]
-    fn only_applies_to_likes() {
+    fn applies_to_announce_too() {
         let (mut store, mut queue) = setup();
         let mut context = store.context(&mut queue);
 
@@ -142,12 +180,12 @@ mod test {
         )) {
             Ok(()) => {
                 assert!(
-                    store.has_read("/like_c"),
-                    "Handler did not read the incoming object"
+                    store.has_read_all(&["/like_c", "/object_a"]),
+                    "Handler did not read the necessary objects"
                 );
                 assert!(
-                    !store.has_read("/object_a"),
-                    "Handler read the target of an Announce"
+                    store.contains("/object_a/shares", "/like_c"),
+                    "Handler did not rgister Announce"
                 );
             }
             Err(e) => panic!("Error: {}", e),
