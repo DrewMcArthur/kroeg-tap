@@ -21,9 +21,11 @@ jobs:
         toolchain: nightly
     - uses: actions-rs/cargo@v1
       with:
+        name: cargo build
         command: build
         args: --verbose --all-features
     - uses: actions-rs/cargo@v1
       with:
+        name: cargo test
         command: test 
         args: --verbose
