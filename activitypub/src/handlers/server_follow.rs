@@ -97,12 +97,12 @@ impl MessageHandler for ServerFollowHandler {
                         };
 
                         if reject {
-                            context.entity_store.remove_collection(
+                            let _ = context.entity_store.remove_collection(
                                 following.to_owned(),
                                 context.user.subject.to_owned(),
                             );
                         } else {
-                            context.entity_store.insert_collection(
+                            let _ = context.entity_store.insert_collection(
                                 following.to_owned(),
                                 context.user.subject.to_owned(),
                             );
