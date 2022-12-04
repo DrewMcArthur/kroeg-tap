@@ -1,4 +1,4 @@
-#![feature(never_type, vec_remove_item)]
+#![feature(never_type)]
 
 /// Macro for translating short as:Note style IDs to full strings as used in
 /// `Entity`. e.g. `as2!(name)`.
