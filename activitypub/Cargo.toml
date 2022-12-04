@@ -6,8 +6,8 @@ edition = "2018"
 
 [dependencies]
 serde_json = "1.0"
-jsonld = { path = "../../jsonld-rs" }
-kroeg-tap = { path = "../tap" }
+jsonld = { git = "https://github.com/DrewMcArthur/kroeg-jsonld-rs" }
+kroeg-tap = { git = "https://github.com/DrewMcArthur/kroeg-tap" }
 async-trait = "0.1.13"
 openssl = "0.10"
 url = "1.7"
