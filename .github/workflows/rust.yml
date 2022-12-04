@@ -16,9 +16,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Rust Release binary
-      uses: rust-build/rust-build.action@v1.4.0
-    # - name: Build
-    #   run: cargo build --verbose
-    # - name: Run tests
-    #   run: cargo test --verbose
+    # - name: Rust Release binary
+    #   uses: rust-build/rust-build.action@v1.4.0
+    - name: Build
+      run: cargo build --verbose
+      with:
+        # profile: minimal
+        toolchain: nightly-2021-07-05
+        # override: true
+        # components: rustfmt
+    - name: Run tests
+      run: cargo test --verbose
