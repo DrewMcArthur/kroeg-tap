@@ -16,18 +16,18 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+      with:
+        submodules: recursive
     - uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
     - uses: actions-rs/cargo@v1
       with:
-        name: cargo build
         command: build
         toolchain: nightly
         args: --verbose --all-features
     - uses: actions-rs/cargo@v1
       with:
-        name: cargo test
         command: test 
         toolchain: nightly
         args: --verbose
