@@ -203,6 +203,7 @@ impl QueueStore for &mut dyn QueueStore {
     }
 }
 
+// todo: delete
 #[async_trait::async_trait]
 impl QueueStore for () {
     async fn get_item(&mut self) -> Result<Option<QueueItem>, StoreError> {
